@@ -1,0 +1,17 @@
+[
+    { "id": "Atrium", "name": "Halls", "link": "", "floor": 1 },
+    { "id": "TheSpoke", "name": "The Spoke", "link": "https://www.the-spoke.ca/", "floor": 1 },
+    { "id": "CentreSpot", "name": "Centre Spot", "link": "", "floor": 1 },
+    { "id": "UCC172", "name": "Jugo Juice", "link": "", "floor": 1 },
+    { "id": "UCC197", "name": "Subway", "link": "", "floor": 1 },
+    { "id": "UCC198", "name": "Bento Sushi", "link": "", "floor": 1 },
+    { "id": "MustangLoungeEast", "name": "Mustang Lounge East", "link": "", "floor": 1 },
+    { "id": "MustangLoungeWest", "name": "Mustang Lounge West", "link": "", "floor": 1 },
+    { "id": "UCC144", "name": "UCC 144", "link": "", "floor": 1 },
+    { "id": "UCC146", "name": "UCC 146 Classroom", "link": "", "floor": 1 },
+    { "id": "UCC147A", "name": "UCC 147A Classroom", "link": "", "floor": 1 },
+    { "id": "UCC147B", "name": "UCC 147B Classroom", "link": "", "floor": 1 },
+    { "id": "UCC149", "name": "UCC 149", "link": "", "floor": 1 },
+    { "id": "Elevator", "name": "Elevators", "link": "", "floor": 1 },
+    { "id": "Bathrooms", "name": "Bathrooms", "link": "", "floor": 1 }
+]
