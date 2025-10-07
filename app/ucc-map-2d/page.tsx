@@ -45,57 +45,125 @@ export default function UCCSvgMapPage() {
       .catch((e) => console.error("rooms.json load error", e));
   }, []);
 
-  // Load SVG for active floor
-  useEffect(() => {
-    const host = svgHostRef.current;
-    if (!host) return;
-    setPopup(null);
-    host.innerHTML = ""; // clear old
+// Load SVG for active floor
+useEffect(() => {
+  const host = svgHostRef.current;
+  if (!host) return;
 
-    const url = `/floors/floor${floor}.svg`;
-    fetch(url)
-      .then((r) => r.text())
-      .then((svgText) => {
-        // Inject SVG inline so we can add listeners & style it
-        host.innerHTML = svgText;
+  setPopup(null);
+  host.innerHTML = "";
 
-        const svg = host.querySelector("svg");
-        if (!svg) return;
-        svg.setAttribute("id", "floor-svg");
-        svg.style.width = "100%";
-        svg.style.height = "100%";
-        svg.style.display = "block";
-        svg.style.userSelect = "none";
-        svg.style.background = "#fff";
+  const url = `/floors/floor${floor}.svg`;
+  let cleanupFns: Array<() => void> = [];
 
-        // Attach click handlers to every element that has an id
-        const clickable = svg.querySelectorAll("path[id], rect[id], polygon[id]");
-        clickable.forEach((el) => {
-          el.classList.add("ucc-clickable");
-          el.addEventListener("click", (ev) => {
-            ev.stopPropagation();
-            const id = (el as SVGElement).id;
-            const info = metaById[id] || { id, name: id };
-            // Get element's center on screen for popup anchor
-            const bbox = (el as SVGGraphicsElement).getBBox();
-            const pt = svg.createSVGPoint();
-            pt.x = bbox.x + bbox.width / 2;
-            pt.y = bbox.y + bbox.height / 2;
-            const ctm = (el as SVGGraphicsElement).getScreenCTM();
-            const screen = ctm ? pt.matrixTransform(ctm) : { x: 0, y: 0 } as any;
-            setPopup({ id, name: info.name || id, link: info.link, x: screen.x, y: screen.y });
+  fetch(url)
+    .then((r) => r.text())
+    .then((svgText) => {
+      host.innerHTML = svgText;
 
-            // Highlight selection
-            svg.querySelectorAll(".ucc-selected").forEach((n) => n.classList.remove("ucc-selected"));
-            el.classList.add("ucc-selected");
-          });
-        });
+      const svg = host.querySelector("svg");
+      if (!svg) return;
 
-        // Dismiss popup on background click
-        svg.addEventListener("click", () => setPopup(null));
-      })
-      .catch((e) => console.error(`SVG load error (${url})`, e));
-  }, [floor, metaById]);
+      svg.setAttribute("id", "floor-svg");
+      Object.assign(svg.style, {
+        width: "100%",
+        height: "100%",
+        display: "block",
+        userSelect: "none",
+        background: "#fff",
+      });
+
+      // Helper: is this element inert?
+      const isDecorative = (el: Element | null) =>
+        !!el && (el.closest(".decorative") !== null);
+
+      // Helper: avoid selecting the floor wrapper or svg root
+      const isContainerId = (id: string) =>
+        /^floor\b/i.test(id) || /^layer\b/i.test(id) || id === "Layer_1";
+
+      // CLICK: attach to id-bearing features (but skip decorative)
+      const clickable = svg.querySelectorAll<SVGElement>("g[id], path[id], rect[id], polygon[id]");
+      const clickHandlers = new Map<SVGElement, (ev: Event) => void>();
+
+      clickable.forEach((el) => {
+        if (isDecorative(el)) return; // skip inert groups/shapes
+        el.classList.add("ucc-clickable");
+
+        const handler = (ev: Event) => {
+          ev.stopPropagation();
+          const target = ev.target as Element | null;
+          const hit = target?.closest<SVGElement>("[id]") ?? el;
+          if (!hit || hit.tagName.toLowerCase() === "svg") return;
+          if (isDecorative(hit)) return;
+          if (isContainerId(hit.id)) return; // ignore wrapper like "floor1", "Layer_1"
+
+          const id = hit.id;
+          const info = metaById[id] || { id, name: id };
+
+          // center (for popup)
+          const bbox = (hit as SVGGraphicsElement).getBBox();
+          const pt = svg.createSVGPoint();
+          pt.x = bbox.x + bbox.width / 2;
+          pt.y = bbox.y + bbox.height / 2;
+          const ctm = (hit as SVGGraphicsElement).getScreenCTM();
+          const screen = ctm ? pt.matrixTransform(ctm) : ({ x: 0, y: 0 } as any);
+
+          setPopup({ id, name: info.name || id, link: info.link, x: screen.x, y: screen.y });
+
+          // selection styling
+          svg.querySelectorAll(".ucc-selected").forEach((n) => n.classList.remove("ucc-selected"));
+          hit.classList.add("ucc-selected");
+        };
+
+        el.addEventListener("click", handler);
+        clickHandlers.set(el, handler);
+      });
+
+      cleanupFns.push(() => {
+        clickHandlers.forEach((fn, el) => el.removeEventListener("click", fn));
+        clickHandlers.clear();
+      });
+
+      // Close popup on background click
+      const bgClick = () => setPopup(null);
+      svg.addEventListener("click", bgClick);
+      cleanupFns.push(() => svg.removeEventListener("click", bgClick));
+
+      // JS-DRIVEN HOVER
+      let hovered: SVGElement | null = null;
+      const onOver = (ev: MouseEvent) => {
+        const hit = (ev.target as Element | null)?.closest<SVGElement>("[id]") ?? null;
+        if (!hit || hit.tagName.toLowerCase() === "svg") return;
+        if (isDecorative(hit)) return;
+        if (isContainerId(hit.id)) return; // don't hover whole floor wrapper
+
+        if (hovered !== hit) {
+          hovered?.classList.remove("ucc-hover");
+          hovered = hit;
+          hovered.classList.add("ucc-hover");
+        }
+      };
+      const onOut = (ev: MouseEvent) => {
+        const to = (ev.relatedTarget as Element | null)?.closest?.<SVGElement>("[id]") ?? null;
+        if (to === hovered) return;
+        hovered?.classList.remove("ucc-hover");
+        hovered = null;
+      };
+      svg.addEventListener("mouseover", onOver);
+      svg.addEventListener("mouseout", onOut);
+      cleanupFns.push(() => {
+        svg.removeEventListener("mouseover", onOver);
+        svg.removeEventListener("mouseout", onOut);
+      });
+    })
+    .catch((e) => console.error(`SVG load error (${url})`, e));
+
+  return () => {
+    cleanupFns.forEach((fn) => fn());
+    cleanupFns = [];
+  };
+}, [floor, metaById]);
+
 
   // Apply search highlight by toggling a CSS class on matching ids
   useEffect(() => {
@@ -173,16 +241,36 @@ export default function UCCSvgMapPage() {
         )}
       </div>
 
-      {/* Minimal styles for interactivity */}
+      {/* Minimal styles for interactivity (scoped to #floor-svg) */}
       <style>{`
-        /* make clickable targets clear */
-        #floor-svg .ucc-clickable { cursor: pointer; transition: filter .15s ease, opacity .15s ease; }
-        #floor-svg .ucc-clickable:hover { filter: brightness(0.92); }
-        #floor-svg .ucc-selected { outline: 3px solid #7c3aed; outline-offset: 2px; }
-        #floor-svg .ucc-highlight { opacity: 0.9; filter: drop-shadow(0 0 0.35rem rgba(124,58,237,0.7)); }
-        /* optional: make non-clickables ignore pointer events */
-        #floor-svg .decorative { pointer-events: none; }
+        /* Clickable: cursor only */
+        #floor-svg .ucc-clickable { cursor: pointer; }
+
+        /* Make decorative groups and ALL their children inert */
+        #floor-svg .decorative,
+        #floor-svg .decorative * {
+          pointer-events: none !important;
+        }
+
+        /* JS-driven hover: stroke only the hovered feature; if it's a <g>, style its child shapes */
+        #floor-svg .ucc-hover { /* no outline here to avoid SVG viewport boxes */ }
+        #floor-svg g.ucc-hover > *:not(.decorative):not(.bg),
+        #floor-svg path.ucc-hover,
+        #floor-svg rect.ucc-hover,
+
+        /* Selected (clicked): stronger stroke; same child-targeting logic */
+        #floor-svg .ucc-selected { /* no outline */ }
+        #floor-svg g.ucc-selected > *:not(.decorative):not(.bg),
+        #floor-svg path.ucc-selected,
+        #floor-svg rect.ucc-selected,
+
+        /* Search highlight: glow without touching strokes/fills */
+        #floor-svg .ucc-highlight {
+          filter: drop-shadow(0 0 0.35rem rgba(124,58,237,0.7));
+        }
       `}</style>
+
+
     </div>
   );
 }
