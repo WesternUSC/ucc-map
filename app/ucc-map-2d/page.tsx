@@ -15,9 +15,16 @@ type RoomMeta = {
   id: string;      // e.g., "UCC146"
   name: string;    // e.g., "Meeting Room"
   link?: string;   // external URL
-  floor?: number;  // optional (useful when you have many floors)
+  floor?: number;  // In use since we have many floors
   category?: string;
 };
+
+const INERT_IDS = new Set([
+  "Atrium", // hallway outlines; keep this set updated for other non-interactive shapes
+]);
+
+const isInertId = (id: string | null | undefined) => !!id && INERT_IDS.has(id);
+
 
 export default function UCCSvgMapPage() {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -25,13 +32,9 @@ export default function UCCSvgMapPage() {
   const [floor, setFloor] = useState(1); // active floor
   const [metaById, setMetaById] = useState<Record<string, RoomMeta>>({});
   const [search, setSearch] = useState("");
-  const [popup, setPopup] = useState<{
-    id: string;
-    name: string;
-    link?: string;
-    x: number;
-    y: number;
-  } | null>(null);
+  const [selectionHistory, setSelectionHistory] = useState<
+    Array<{ id: string; name: string; link?: string }>
+  >([]);
 
   // Load metadata once
   useEffect(() => {
@@ -50,7 +53,7 @@ useEffect(() => {
   const host = svgHostRef.current;
   if (!host) return;
 
-  setPopup(null);
+  setSelectionHistory([]);
   host.innerHTML = "";
 
   const url = `/floors/floor${floor}.svg`;
@@ -87,6 +90,10 @@ useEffect(() => {
 
       clickable.forEach((el) => {
         if (isDecorative(el)) return; // skip inert groups/shapes
+        if (isInertId(el.id)) {
+          el.classList.add("ucc-inert");
+          return; // skip configured inert ids
+        }
         el.classList.add("ucc-clickable");
 
         const handler = (ev: Event) => {
@@ -95,20 +102,16 @@ useEffect(() => {
           const hit = target?.closest<SVGElement>("[id]") ?? el;
           if (!hit || hit.tagName.toLowerCase() === "svg") return;
           if (isDecorative(hit)) return;
+          if (isInertId(hit.id)) return;
           if (isContainerId(hit.id)) return; // ignore wrapper like "floor1", "Layer_1"
 
           const id = hit.id;
           const info = metaById[id] || { id, name: id };
 
-          // center (for popup)
-          const bbox = (hit as SVGGraphicsElement).getBBox();
-          const pt = svg.createSVGPoint();
-          pt.x = bbox.x + bbox.width / 2;
-          pt.y = bbox.y + bbox.height / 2;
-          const ctm = (hit as SVGGraphicsElement).getScreenCTM();
-          const screen = ctm ? pt.matrixTransform(ctm) : ({ x: 0, y: 0 } as any);
-
-          setPopup({ id, name: info.name || id, link: info.link, x: screen.x, y: screen.y });
+          setSelectionHistory((prev) => {
+            const without = prev.filter((item) => item.id !== id);
+            return [{ id, name: info.name || id, link: info.link }, ...without].slice(0, 5); // Stores up to 5 rooms in history
+          });
 
           // selection styling
           svg.querySelectorAll(".ucc-selected").forEach((n) => n.classList.remove("ucc-selected"));
@@ -125,7 +128,9 @@ useEffect(() => {
       });
 
       // Close popup on background click
-      const bgClick = () => setPopup(null);
+      const bgClick = () => {
+        svg.querySelectorAll(".ucc-selected").forEach((n) => n.classList.remove("ucc-selected"));
+      };
       svg.addEventListener("click", bgClick);
       cleanupFns.push(() => svg.removeEventListener("click", bgClick));
 
@@ -176,7 +181,13 @@ useEffect(() => {
     if (!search) return;
 
     const q = search.toLowerCase();
-    const matches = Object.keys(metaById).filter((id) => id.toLowerCase().includes(q) || (metaById[id].name || "").toLowerCase().includes(q));
+        const matches = Object.keys(metaById).filter((id) => {
+      if (isInertId(id)) return false;
+      return (
+        id.toLowerCase().includes(q) ||
+        (metaById[id].name || "").toLowerCase().includes(q)
+      );
+    });
     for (const id of matches) {
       const el = svg.querySelector(`#${CSS.escape(id)}`);
       if (el) el.classList.add("ucc-highlight");
@@ -186,65 +197,85 @@ useEffect(() => {
   return (
     <div ref={containerRef} className="w-full h-[calc(100vh-80px)] flex">
       {/* Sidebar */}
-      <div className="w-72 border-r border-neutral-200 p-3 space-y-4 bg-white">
-        <div>
-          <div className="text-xs uppercase tracking-wide text-neutral-500 mb-1">Floor</div>
-          <div className="flex gap-2">
-            {[1, 2, 3, 4, 5].map((f) => (
-              <button
-                key={f}
-                onClick={() => setFloor(f)}
-                className={`px-3 py-1.5 rounded-xl border text-sm ${floor===f?"bg-violet-700 text-white border-violet-700":"bg-white text-neutral-800 border-neutral-300 hover:border-neutral-400"}`}
-              >
-                {f}
-              </button>
-            ))}
+      <div className="w-80 border-r border-neutral-200 p-3 bg-white flex flex-col">
+        <div className="space-y-4">
+          <div>
+            <div className="text-xs uppercase tracking-wide text-neutral-500 mb-1">Floor</div>
+            <div className="flex gap-2">
+              {[1, 2, 3, 4, 5].map((f) => (
+                <button
+                  key={f}
+                  onClick={() => setFloor(f)}
+                  className={`px-3 py-1.5 rounded-xl border text-sm ${floor===f?"bg-violet-700 text-white border-violet-700":"bg-white text-neutral-800 border-neutral-300 hover:border-neutral-400"}`}
+                >
+                  {f}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <div className="text-xs uppercase tracking-wide text-neutral-500 mb-1">Search</div>
+            <input
+              type="text"
+              placeholder="Room id or name…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="w-full rounded-xl border border-neutral-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500"
+            />
+            <div className="mt-1 text-xs text-neutral-500">Matches get highlighted on the map.</div>
+          </div>
+
+          <div className="text-xs text-neutral-500">
+            Click any room to add it to the history. Selecting the same room again moves it to the top.
           </div>
         </div>
 
-        <div>
-          <div className="text-xs uppercase tracking-wide text-neutral-500 mb-1">Search</div>
-          <input
-            type="text"
-            placeholder="Room id or name…"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="w-full rounded-xl border border-neutral-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500"
-          />
-          <div className="mt-1 text-xs text-neutral-500">Matches get highlighted on the map.</div>
+        <div className="relative mt-4 flex-1 min-h-[120px]">
+          <div className="absolute inset-0 overflow-y-auto pr-1 space-y-3">
+            {selectionHistory.length === 0 && (
+              <div className="text-sm text-neutral-500">
+                Selected rooms will appear here in a stack of up to three recent results.
+              </div>
+            )}
+            {selectionHistory.map((room) => (
+              <div
+                key={room.id}
+                className="relative w-full rounded-2xl border border-neutral-200 bg-white/95 backdrop-blur p-3 shadow-xl"
+              >
+                <div className="text-base font-semibold text-neutral-900">{room.name}</div>
+                {room.link && (
+                  <a
+                    href={room.link}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-violet-700 text-sm hover:underline inline-block mt-2"
+                  >
+                    Open details ↗
+                  </a>
+                )}
+              </div>
+            ))}
+          </div>
         </div>
-
-        <div className="text-xs text-neutral-500">Click any room to open its popup. Click blank space to close.</div>
       </div>
 
       {/* SVG host */}
       <div className="relative flex-1 bg-white">
-        <div ref={svgHostRef} className="w-full h-full" />
-
-        {/* Popup (screen-anchored) */}
-        {popup && (
-          <div
-            className="absolute z-10"
-            style={{ left: popup.x, top: popup.y, transform: "translate(-50%, -120%)" }}
-          >
-            <div className="w-64 rounded-2xl border border-neutral-200 bg-white/95 backdrop-blur p-3 shadow-xl">
-              <div className="text-xs text-neutral-500">{popup.id}</div>
-              <div className="text-base font-semibold text-neutral-900">{popup.name}</div>
-              {popup.link && (
-                <a href={popup.link} target="_blank" rel="noreferrer" className="text-violet-700 text-sm hover:underline inline-block mt-2">
-                  Open details ↗
-                </a>
-              )}
-              <button onClick={() => setPopup(null)} className="mt-3 w-full rounded-xl bg-neutral-900 text-white text-sm py-1.5 hover:bg-neutral-800">Close</button>
-            </div>
-          </div>
-        )}
+        <div ref={svgHostRef} className="w-full h-full flex items-center justify-center p-6" />
       </div>
 
       {/* Minimal styles for interactivity (scoped to #floor-svg) */}
       <style>{`
         /* Clickable: cursor only */
         #floor-svg .ucc-clickable { cursor: pointer; }
+        
+        /* Inert ids: force default cursor + disable pointer events */
+        #floor-svg .ucc-inert,
+        #floor-svg .ucc-inert * {
+          cursor: default !important;
+          pointer-events: none !important;
+        }
 
         /* Make decorative groups and ALL their children inert */
         #floor-svg .decorative,
