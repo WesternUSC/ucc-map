@@ -19,8 +19,10 @@ type RoomMeta = {
   category?: string;
 };
 
+// Keep this set updated for other non-interactive shapes
 const INERT_IDS = new Set([
-  "Atrium", // hallway outlines; keep this set updated for other non-interactive shapes
+  "Atrium", // hallway outlines
+  "UCC144"
 ]);
 
 const isInertId = (id: string | null | undefined) => !!id && INERT_IDS.has(id);
