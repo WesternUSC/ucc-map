@@ -12,21 +12,21 @@ import React, { useEffect, useRef, useState } from "react";
 
 // Types
 type RoomMeta = {
-  id: string;      // e.g., "UCC146"
-  name: string;    // e.g., "Meeting Room"
-  link?: string;   // external URL
-  floor?: number;  // In use since we have many floors
+  id: string;            // e.g., "UCC146"
+  name: string;          // e.g., "Meeting Room"
+  link?: string;         // external URL
+  floor?: number;        // In use since we have many floors
+  description?: string;  // optional longer text
   category?: string;
 };
 
 // Keep this set updated for other non-interactive shapes
 const INERT_IDS = new Set([
   "Atrium", // hallway outlines
-  "UCC144"
+  "UCC144"  // Unused room?
 ]);
 
 const isInertId = (id: string | null | undefined) => !!id && INERT_IDS.has(id);
-
 
 export default function UCCSvgMapPage() {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -35,7 +35,7 @@ export default function UCCSvgMapPage() {
   const [metaById, setMetaById] = useState<Record<string, RoomMeta>>({});
   const [search, setSearch] = useState("");
   const [selectionHistory, setSelectionHistory] = useState<
-    Array<{ id: string; name: string; link?: string }>
+    Array<{ id: string; name: string; link?: string; description?: string }>
   >([]);
 
   // Load metadata once
@@ -112,7 +112,15 @@ useEffect(() => {
 
           setSelectionHistory((prev) => {
             const without = prev.filter((item) => item.id !== id);
-            return [{ id, name: info.name || id, link: info.link }, ...without].slice(0, 5); // Stores up to 5 rooms in history
+                        return [
+              {
+                id,
+                name: info.name || id,
+                link: info.link,
+                description: info.description,
+              },
+              ...without,
+            ].slice(0, 5); // Stores up to 5 rooms in history
           });
 
           // selection styling
@@ -246,6 +254,9 @@ useEffect(() => {
                 className="relative w-full rounded-2xl border border-neutral-200 bg-white/95 backdrop-blur p-3 shadow-xl"
               >
                 <div className="text-base font-semibold text-neutral-900">{room.name}</div>
+                {room.description && (
+                  <div className="mt-1 text-sm text-neutral-600">{room.description}</div>
+                )}
                 {room.link && (
                   <a
                     href={room.link}
