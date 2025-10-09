@@ -27,6 +27,13 @@
     "floor": 1,
     "description": "Smoothies, juices, and light bites for a quick refresh."
   },
+{
+    "id": "UCC176",
+    "name": "Info Source",
+    "link": "https://westernusc.ca/services/infosource/",
+    "floor": 1,
+    "description": "Campus information centre offering students and the Western community valuable service in a welcomed environment. "
+  },
   {
     "id": "UCC197",
     "name": "Subway",
