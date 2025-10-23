@@ -11,42 +11,48 @@
     "name": "The Spoke",
     "link": "https://www.the-spoke.ca/",
     "floor": 1,
-    "description": "Campus pub and eatery serving food, coffee, and snacks."
+    "description": "Campus pub and eatery serving food, coffee, and snacks.",
+    "category": "food"
   },
   {
     "id": "CentreSpot",
     "name": "Centre Spot",
     "link": "",
     "floor": 1,
-    "description": "Central food court with a rotating mix of vendors."
+    "description": "Central food court with a rotating mix of vendors.",
+    "category": "food"
   },
   {
     "id": "UCC172",
     "name": "Jugo Juice",
     "link": "",
     "floor": 1,
-    "description": "Smoothies, juices, and light bites for a quick refresh."
+    "description": "Smoothies, juices, and light bites for a quick refresh.",
+    "category": "food"
   },
 {
     "id": "UCC176",
     "name": "Info Source",
     "link": "https://westernusc.ca/services/infosource/",
     "floor": 1,
-    "description": "Campus information centre offering students and the Western community valuable service in a welcomed environment. "
+    "description": "Campus information centre offering students and the Western community valuable service in a welcomed environment. ",
+    "category": "service"
   },
   {
     "id": "UCC197",
     "name": "Subway",
     "link": "",
     "floor": 1,
-    "description": "Sandwich shop offering customizable subs and salads."
+    "description": "Sandwich shop offering customizable subs and salads.",
+    "category": "food"
   },
   {
     "id": "UCC198",
     "name": "Bento Sushi",
     "link": "",
     "floor": 1,
-    "description": "Grab-and-go sushi, maki rolls, and Japanese-inspired meals."
+    "description": "Grab-and-go sushi, maki rolls, and Japanese-inspired meals.",
+    "category": "food"
   },
   {
     "id": "MustangLoungeEast",
@@ -74,35 +80,40 @@
     "name": "UCC 146 Classroom",
     "link": "",
     "floor": 1,
-    "description": "Lecture-style classroom equipped with AV and tiered seating."
+    "description": "Lecture-style classroom equipped with AV and tiered seating.",
+    "category": "classroom"
   },
   {
     "id": "UCC147A",
     "name": "UCC 147A Classroom",
     "link": "",
     "floor": 1,
-    "description": "Seminar room suited for smaller classes and workshops."
+    "description": "Seminar room suited for smaller classes and workshops.",
+    "category": "classroom"
   },
   {
     "id": "UCC147B",
     "name": "UCC 147B Classroom",
     "link": "",
     "floor": 1,
-    "description": "Collaborative classroom with movable seating and whiteboards."
+    "description": "Collaborative classroom with movable seating and whiteboards.",
+    "category": "classroom"
   },
   {
     "id": "UCC149",
     "name": "UCC 149",
     "link": "",
     "floor": 1,
-    "description": "Classroom space used for lectures, exams, and training sessions."
+    "description": "Classroom space used for lectures, exams, and training sessions.",
+    "category": "classroom"
   },
   {
     "id": "Elevator",
     "name": "Elevators",
     "link": "",
     "floor": 1,
-    "description": "Elevator bank providing access to all public floors."
+    "description": "Elevator bank providing access to all public floors.",
+    "category": "elevator"
   },
   {
     "id": "Bathrooms",

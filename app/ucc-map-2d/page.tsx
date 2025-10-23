@@ -9,6 +9,7 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
+import { CATEGORY_SHORTCUTS } from "./category-icons";
 
 // Types
 type RoomMeta = {
@@ -17,7 +18,8 @@ type RoomMeta = {
   link?: string;         // external URL
   floor?: number;        // In use since we have many floors
   description?: string;  // optional longer text
-  category?: string;
+  category?: string | string[]; // e.g., "bathroom" or ["lab", "classroom"]
+  categories?: string[]; 
 };
 
 type ViewTransform = {scale: number; x: number; y: number};
@@ -37,6 +39,7 @@ export default function UCCSvgMapPage() {
   const [floor, setFloor] = useState(1); // active floor
   const [metaById, setMetaById] = useState<Record<string, RoomMeta>>({});
   const [search, setSearch] = useState("");
+  const [activeCategory, setActiveCategory] = useState<string | null>(null);
   const [selectionHistory, setSelectionHistory] = useState<
     Array<{ id: string; name: string; link?: string; description?: string }>
   >([]);
@@ -383,7 +386,7 @@ export default function UCCSvgMapPage() {
   };
 
 
-  // Apply search highlight by toggling a CSS class on matching ids
+  // Apply search/category highlight by toggling a CSS class on matching ids
   useEffect(() => {
     const host = svgHostRef.current;
     if (!host) return;
@@ -391,21 +394,44 @@ export default function UCCSvgMapPage() {
     if (!svg) return;
 
     svg.querySelectorAll(".ucc-highlight").forEach((n) => n.classList.remove("ucc-highlight"));
-    if (!search) return;
 
-    const q = search.toLowerCase();
-        const matches = Object.keys(metaById).filter((id) => {
-      if (isInertId(id)) return false;
-      return (
-        id.toLowerCase().includes(q) ||
-        (metaById[id].name || "").toLowerCase().includes(q)
-      );
-    });
+    const matches = new Set<string>();
+
+    if (search) {
+      const q = search.toLowerCase();
+      Object.keys(metaById).forEach((id) => {
+        if (isInertId(id)) return;
+        if (
+          id.toLowerCase().includes(q) ||
+          (metaById[id].name || "").toLowerCase().includes(q)
+        ) {
+          matches.add(id);
+        }
+      });
+    }
+
+    if (activeCategory) {
+      Object.entries(metaById).forEach(([id, meta]) => {
+        if (isInertId(id)) return;
+        const value = meta.categories ?? meta.category;
+        const normalized = Array.isArray(value)
+          ? value
+          : typeof value === "string" && value
+          ? [value]
+          : [];
+        if (normalized.includes(activeCategory)) {
+          matches.add(id);
+        }
+      });
+    }
+
+    if (matches.size === 0) return;
+
     for (const id of matches) {
       const el = svg.querySelector(`#${CSS.escape(id)}`);
       if (el) el.classList.add("ucc-highlight");
     }
-  }, [search, metaById]);
+  }, [search, activeCategory, metaById]);
 
   return (
     <div ref={containerRef} className="w-full h-[calc(100vh-80px)] flex">
@@ -436,7 +462,32 @@ export default function UCCSvgMapPage() {
               onChange={(e) => setSearch(e.target.value)}
               className="w-full rounded-xl border border-neutral-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500"
             />
-            <div className="mt-1 text-xs text-neutral-500">Matches get highlighted on the map.</div>
+            <div className="mt-1 text-xs text-neutral-500">
+              Matches get highlighted on the map. Use the shortcuts below for quick filters.
+            </div>
+            <div className="mt-3 flex items-center gap-2">
+              {CATEGORY_SHORTCUTS.map(({ id, label, Icon }) => {
+                const isActive = activeCategory === id;
+                return (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => setActiveCategory((prev) => (prev === id ? null : id))}
+                    aria-pressed={isActive}
+                    aria-label={label}
+                    title={label}
+                    className={`group relative flex aspect-square min-w-0 flex-1 max-w-[3.5rem] items-center justify-center rounded-full border-2 border-transparent p-1 transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 ${
+                      isActive
+                        ? "border-violet-500 bg-white shadow-[0_10px_24px_rgba(99,102,241,0.35)]"
+                        : "bg-transparent hover:border-neutral-200"
+                    }`}
+                  >
+                    <span className="sr-only">{label}</span>
+                    <Icon active={isActive} className="h-full w-full" />
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
           <div className="text-xs text-neutral-500">
