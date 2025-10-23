@@ -20,6 +20,8 @@ type RoomMeta = {
   category?: string;
 };
 
+type ViewTransform = {scale: number; x: number; y: number};
+
 // Keep this set updated for other non-interactive shapes
 const INERT_IDS = new Set([
   "Atrium", // hallway outlines
@@ -31,12 +33,66 @@ const isInertId = (id: string | null | undefined) => !!id && INERT_IDS.has(id);
 export default function UCCSvgMapPage() {
   const containerRef = useRef<HTMLDivElement>(null);
   const svgHostRef = useRef<HTMLDivElement>(null);
+  const svgElementRef = useRef<SVGSVGElement | null>(null);
   const [floor, setFloor] = useState(1); // active floor
   const [metaById, setMetaById] = useState<Record<string, RoomMeta>>({});
   const [search, setSearch] = useState("");
   const [selectionHistory, setSelectionHistory] = useState<
     Array<{ id: string; name: string; link?: string; description?: string }>
   >([]);
+  const [viewTransform, setViewTransform] = useState<ViewTransform>({
+    scale: 1,
+    x: 0,
+    y: 0,
+  });
+
+  const transformRef = useRef<ViewTransform>(viewTransform);
+  const activePointers = useRef(
+    new Map<number, { x: number; y: number }>()
+  );
+  const panState = useRef<
+    | {
+        pointerId: number;
+        start: { x: number; y: number };
+        origin: ViewTransform;
+      }
+    | null
+  >(null);
+  const pinchState = useRef<
+    | {
+        initialDistance: number;
+        midpointContent: { x: number; y: number };
+        origin: ViewTransform;
+      }
+    | null
+  >(null);
+
+  const clampScale = (value: number) => Math.min(5, Math.max(0.5, value));
+
+  const applyTransform = (svg: SVGSVGElement | null, transform: ViewTransform) => {
+    if (!svg) return;
+    svg.style.transform = `translate(${transform.x}px, ${transform.y}px) scale(${transform.scale})`;
+  };
+
+  const zoomAt = (factor: number, focal?: { x: number; y: number }) => {
+    const host = svgHostRef.current;
+    if (!host) return;
+    const rect = host.getBoundingClientRect();
+    const point = focal ?? { x: rect.width / 2, y: rect.height / 2 };
+    setViewTransform((prev) => {
+      const nextScale = clampScale(prev.scale * factor);
+      if (nextScale === prev.scale) return prev;
+      const contentPoint = {
+        x: (point.x - prev.x) / prev.scale,
+        y: (point.y - prev.y) / prev.scale,
+      };
+      return {
+        scale: nextScale,
+        x: point.x - contentPoint.x * nextScale,
+        y: point.y - contentPoint.y * nextScale,
+      };
+    });
+  };
 
   // Load metadata once
   useEffect(() => {
@@ -50,134 +106,281 @@ export default function UCCSvgMapPage() {
       .catch((e) => console.error("rooms.json load error", e));
   }, []);
 
-// Load SVG for active floor
-useEffect(() => {
-  const host = svgHostRef.current;
-  if (!host) return;
+  // Load SVG for active floor
+  useEffect(() => {
+    const host = svgHostRef.current;
+    if (!host) return;
 
-  setSelectionHistory([]);
-  host.innerHTML = "";
+    setSelectionHistory([]);
+    host.innerHTML = "";
 
-  const url = `/floors/floor${floor}.svg`;
-  let cleanupFns: Array<() => void> = [];
+    const url = `/floors/floor${floor}.svg`;
+    let cleanupFns: Array<() => void> = [];
 
-  fetch(url)
-    .then((r) => r.text())
-    .then((svgText) => {
-      host.innerHTML = svgText;
+    fetch(url)
+      .then((r) => r.text())
+      .then((svgText) => {
+        host.innerHTML = svgText;
 
-      const svg = host.querySelector("svg");
-      if (!svg) return;
+        const svg = host.querySelector("svg");
+        if (!svg) return;
 
-      svg.setAttribute("id", "floor-svg");
-      Object.assign(svg.style, {
-        width: "100%",
-        height: "100%",
-        display: "block",
-        userSelect: "none",
-        background: "#fff",
-      });
+        svg.setAttribute("id", "floor-svg");
+        Object.assign(svg.style, {
+          width: "100%",
+          height: "100%",
+          display: "block",
+          userSelect: "none",
+          background: "#fff",
+          transformOrigin: "0 0",
+          touchAction: "none",
+        });
 
-      // Helper: is this element inert?
-      const isDecorative = (el: Element | null) =>
-        !!el && (el.closest(".decorative") !== null);
+        svgElementRef.current = svg;
+        const initial = { scale: 1, x: 0, y: 0 };
+        transformRef.current = initial;
+        setViewTransform(initial);
+        applyTransform(svg, initial);
 
-      // Helper: avoid selecting the floor wrapper or svg root
-      const isContainerId = (id: string) =>
-        /^floor\b/i.test(id) || /^layer\b/i.test(id) || id === "Layer_1";
+        // Helper: is this element inert?
+        const isDecorative = (el: Element | null) =>
+          !!el && (el.closest(".decorative") !== null);
 
-      // CLICK: attach to id-bearing features (but skip decorative)
-      const clickable = svg.querySelectorAll<SVGElement>("g[id], path[id], rect[id], polygon[id]");
-      const clickHandlers = new Map<SVGElement, (ev: Event) => void>();
+        // Helper: avoid selecting the floor wrapper or svg root
+        const isContainerId = (id: string) =>
+          /^floor\b/i.test(id) || /^layer\b/i.test(id) || id === "Layer_1";
 
-      clickable.forEach((el) => {
-        if (isDecorative(el)) return; // skip inert groups/shapes
-        if (isInertId(el.id)) {
-          el.classList.add("ucc-inert");
-          return; // skip configured inert ids
-        }
-        el.classList.add("ucc-clickable");
+        // CLICK: attach to id-bearing features (but skip decorative)
+        const clickable = svg.querySelectorAll<SVGElement>("g[id], path[id], rect[id], polygon[id]");
+        const clickHandlers = new Map<SVGElement, (ev: Event) => void>();
 
-        const handler = (ev: Event) => {
-          ev.stopPropagation();
-          const target = ev.target as Element | null;
-          const hit = target?.closest<SVGElement>("[id]") ?? el;
+        clickable.forEach((el) => {
+          if (isDecorative(el)) return; // skip inert groups/shapes
+          if (isInertId(el.id)) {
+            el.classList.add("ucc-inert");
+            return; // skip configured inert ids
+          }
+          el.classList.add("ucc-clickable");
+
+          const handler = (ev: Event) => {
+            ev.stopPropagation();
+            const target = ev.target as Element | null;
+            const hit = target?.closest<SVGElement>("[id]") ?? el;
+            if (!hit || hit.tagName.toLowerCase() === "svg") return;
+            if (isDecorative(hit)) return;
+            if (isInertId(hit.id)) return;
+            if (isContainerId(hit.id)) return; // ignore wrapper like "floor1", "Layer_1"
+
+            const id = hit.id;
+            const info = metaById[id] || { id, name: id };
+
+            setSelectionHistory((prev) => {
+              const without = prev.filter((item) => item.id !== id);
+              return [
+                {
+                  id,
+                  name: info.name || id,
+                  link: info.link,
+                  description: info.description,
+                },
+                ...without,
+              ].slice(0, 5); // Stores up to 5 rooms in history
+            });
+
+            // selection styling
+            svg
+              .querySelectorAll(".ucc-selected")
+              .forEach((n) => n.classList.remove("ucc-selected"));
+            hit.classList.add("ucc-selected");
+          };
+
+          el.addEventListener("click", handler);
+          clickHandlers.set(el, handler);
+        });
+
+        cleanupFns.push(() => {
+          clickHandlers.forEach((fn, el) => el.removeEventListener("click", fn));
+          clickHandlers.clear();
+        });
+
+        // Close popup on background click
+        const bgClick = () => {
+          svg
+            .querySelectorAll(".ucc-selected")
+            .forEach((n) => n.classList.remove("ucc-selected"));
+        };
+        svg.addEventListener("click", bgClick);
+        cleanupFns.push(() => svg.removeEventListener("click", bgClick));
+
+        // JS-DRIVEN HOVER
+        let hovered: SVGElement | null = null;
+        const onOver = (ev: MouseEvent) => {
+          const hit = (ev.target as Element | null)?.closest<SVGElement>("[id]") ?? null;
           if (!hit || hit.tagName.toLowerCase() === "svg") return;
           if (isDecorative(hit)) return;
-          if (isInertId(hit.id)) return;
-          if (isContainerId(hit.id)) return; // ignore wrapper like "floor1", "Layer_1"
+          if (isContainerId(hit.id)) return; // don't hover whole floor wrapper
 
-          const id = hit.id;
-          const info = metaById[id] || { id, name: id };
-
-          setSelectionHistory((prev) => {
-            const without = prev.filter((item) => item.id !== id);
-                        return [
-              {
-                id,
-                name: info.name || id,
-                link: info.link,
-                description: info.description,
-              },
-              ...without,
-            ].slice(0, 5); // Stores up to 5 rooms in history
-          });
-
-          // selection styling
-          svg.querySelectorAll(".ucc-selected").forEach((n) => n.classList.remove("ucc-selected"));
-          hit.classList.add("ucc-selected");
+          if (hovered !== hit) {
+            hovered?.classList.remove("ucc-hover");
+            hovered = hit;
+            hovered.classList.add("ucc-hover");
+          }
         };
-
-        el.addEventListener("click", handler);
-        clickHandlers.set(el, handler);
-      });
-
-      cleanupFns.push(() => {
-        clickHandlers.forEach((fn, el) => el.removeEventListener("click", fn));
-        clickHandlers.clear();
-      });
-
-      // Close popup on background click
-      const bgClick = () => {
-        svg.querySelectorAll(".ucc-selected").forEach((n) => n.classList.remove("ucc-selected"));
-      };
-      svg.addEventListener("click", bgClick);
-      cleanupFns.push(() => svg.removeEventListener("click", bgClick));
-
-      // JS-DRIVEN HOVER
-      let hovered: SVGElement | null = null;
-      const onOver = (ev: MouseEvent) => {
-        const hit = (ev.target as Element | null)?.closest<SVGElement>("[id]") ?? null;
-        if (!hit || hit.tagName.toLowerCase() === "svg") return;
-        if (isDecorative(hit)) return;
-        if (isContainerId(hit.id)) return; // don't hover whole floor wrapper
-
-        if (hovered !== hit) {
+        const onOut = (ev: MouseEvent) => {
+          const to = (ev.relatedTarget as Element | null)?.closest?.<SVGElement>("[id]") ?? null;
+          if (to === hovered) return;
           hovered?.classList.remove("ucc-hover");
-          hovered = hit;
-          hovered.classList.add("ucc-hover");
-        }
-      };
-      const onOut = (ev: MouseEvent) => {
-        const to = (ev.relatedTarget as Element | null)?.closest?.<SVGElement>("[id]") ?? null;
-        if (to === hovered) return;
-        hovered?.classList.remove("ucc-hover");
-        hovered = null;
-      };
-      svg.addEventListener("mouseover", onOver);
-      svg.addEventListener("mouseout", onOut);
-      cleanupFns.push(() => {
-        svg.removeEventListener("mouseover", onOver);
-        svg.removeEventListener("mouseout", onOut);
-      });
-    })
-    .catch((e) => console.error(`SVG load error (${url})`, e));
+          hovered = null;
+        };
+        svg.addEventListener("mouseover", onOver);
+        svg.addEventListener("mouseout", onOut);
+        cleanupFns.push(() => {
+          svg.removeEventListener("mouseover", onOver);
+          svg.removeEventListener("mouseout", onOut);
+        });
+      })
+      .catch((e) => console.error(`SVG load error (${url})`, e));
 
-  return () => {
-    cleanupFns.forEach((fn) => fn());
-    cleanupFns = [];
+      return () => {
+        cleanupFns.forEach((fn) => fn());
+        cleanupFns = [];
+        svgElementRef.current = null;
+      };
+  }, [floor, metaById]);
+
+     
+  useEffect(() => {
+    transformRef.current = viewTransform;
+    applyTransform(svgElementRef.current, viewTransform);
+  }, [viewTransform]);
+
+  useEffect(() => {
+    const host = svgHostRef.current;
+    if (!host) return;
+
+    host.style.touchAction = "none";
+
+    const getRelativePoint = (ev: { clientX: number; clientY: number }) => {
+      const rect = host.getBoundingClientRect();
+      return {
+        x: ev.clientX - rect.left,
+        y: ev.clientY - rect.top,
+      };
+    };
+
+    const onWheel = (ev: WheelEvent) => {
+      if (!svgElementRef.current) return;
+      ev.preventDefault();
+      const focal = getRelativePoint(ev);
+      const direction = ev.deltaY > 0 ? 1 / 1.2 : 1.2;
+      zoomAt(direction, focal);
+    };
+
+    const onPointerDown = (ev: PointerEvent) => {
+      if (!svgElementRef.current) return;
+      const point = getRelativePoint(ev);
+      activePointers.current.set(ev.pointerId, point);
+
+      if (activePointers.current.size === 1) {
+        panState.current = {
+          pointerId: ev.pointerId,
+          start: point,
+          origin: transformRef.current,
+        };
+        pinchState.current = null;
+      } else if (activePointers.current.size === 2) {
+        const points = Array.from(activePointers.current.values());
+        const [p1, p2] = points;
+        const distance = Math.hypot(p1.x - p2.x, p1.y - p2.y);
+        const midpoint = { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 };
+        const origin = transformRef.current;
+        pinchState.current = {
+          initialDistance: distance,
+          midpointContent: {
+            x: (midpoint.x - origin.x) / origin.scale,
+            y: (midpoint.y - origin.y) / origin.scale,
+          },
+          origin,
+        };
+        panState.current = null;
+      }
+    };
+
+    const onPointerMove = (ev: PointerEvent) => {
+      if (!activePointers.current.has(ev.pointerId)) return;
+      const point = getRelativePoint(ev);
+      activePointers.current.set(ev.pointerId, point);
+
+      if (activePointers.current.size === 2 && pinchState.current) {
+        const points = Array.from(activePointers.current.values());
+        const [p1, p2] = points;
+        const distance = Math.hypot(p1.x - p2.x, p1.y - p2.y);
+        const midpoint = { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 };
+        const pinch = pinchState.current;
+        if (pinch.initialDistance === 0) return;
+        const scaleFactor = distance / pinch.initialDistance;
+        const targetScale = clampScale(pinch.origin.scale * scaleFactor);
+        setViewTransform((prev) => {
+          const contentPoint = pinch.midpointContent;
+          return {
+            scale: targetScale,
+            x: midpoint.x - contentPoint.x * targetScale,
+            y: midpoint.y - contentPoint.y * targetScale,
+          };
+        });
+        return;
+      }
+
+      if (
+        activePointers.current.size === 1 &&
+        panState.current &&
+        panState.current.pointerId === ev.pointerId
+      ) {
+        const pan = panState.current;
+        const dx = point.x - pan.start.x;
+        const dy = point.y - pan.start.y;
+        setViewTransform({
+          scale: pan.origin.scale,
+          x: pan.origin.x + dx,
+          y: pan.origin.y + dy,
+        });
+      }
+    };
+
+    const clearPointer = (ev: PointerEvent) => {
+      activePointers.current.delete(ev.pointerId);
+      if (panState.current?.pointerId === ev.pointerId) {
+        panState.current = null;
+      }
+      if (activePointers.current.size < 2) {
+        pinchState.current = null;
+      }
+    };
+
+    host.addEventListener("wheel", onWheel, { passive: false });
+    host.addEventListener("pointerdown", onPointerDown);
+    host.addEventListener("pointermove", onPointerMove);
+    host.addEventListener("pointerup", clearPointer);
+    host.addEventListener("pointercancel", clearPointer);
+    host.addEventListener("pointerleave", clearPointer);
+
+    return () => {
+      host.removeEventListener("wheel", onWheel);
+      host.removeEventListener("pointerdown", onPointerDown);
+      host.removeEventListener("pointermove", onPointerMove);
+      host.removeEventListener("pointerup", clearPointer);
+      host.removeEventListener("pointercancel", clearPointer);
+      host.removeEventListener("pointerleave", clearPointer);
+    };
+  }, []);
+
+  const handleZoomIn = () => {
+    zoomAt(1.2);
   };
-}, [floor, metaById]);
+
+  const handleZoomOut = () => {
+    zoomAt(1 / 1.2);
+  };
 
 
   // Apply search highlight by toggling a CSS class on matching ids
@@ -275,7 +478,28 @@ useEffect(() => {
 
       {/* SVG host */}
       <div className="relative flex-1 bg-white">
-        <div ref={svgHostRef} className="w-full h-full flex items-center justify-center p-6" />
+        <div className="absolute top-4 right-4 z-10 flex flex-col gap-2">
+        <button
+          type="button"
+          onClick={handleZoomIn}
+          className="h-10 w-10 rounded-full bg-white shadow border border-neutral-200 text-lg font-semibold hover:bg-neutral-100 focus:outline-none focus:ring-2 focus:ring-violet-500"
+          aria-label="Zoom in"
+        >
+          +
+        </button>
+        <button
+          type="button"
+          onClick={handleZoomOut}
+          className="h-10 w-10 rounded-full bg-white shadow border border-neutral-200 text-lg font-semibold hover:bg-neutral-100 focus:outline-none focus:ring-2 focus:ring-violet-500"
+          aria-label="Zoom out"
+        >
+          −
+        </button>
+      </div>
+      <div
+        ref={svgHostRef}
+        className="relative w-full h-full overflow-hidden p-6"
+      />
       </div>
 
       {/* Minimal styles for interactivity (scoped to #floor-svg) */}
