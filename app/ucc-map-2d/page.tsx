@@ -8,7 +8,8 @@
 
 "use client";
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import { CATEGORY_SHORTCUTS } from "./category-icons";
 
 // Types
 type RoomMeta = {
@@ -17,7 +18,8 @@ type RoomMeta = {
   link?: string;         // external URL
   floor?: number;        // In use since we have many floors
   description?: string;  // optional longer text
-  category?: string;
+  category?: string | string[]; // e.g., "bathroom" or ["lab", "classroom"]
+  categories?: string[]; 
 };
 
 type ViewTransform = {scale: number; x: number; y: number};
@@ -37,6 +39,7 @@ export default function UCCSvgMapPage() {
   const [floor, setFloor] = useState(1); // active floor
   const [metaById, setMetaById] = useState<Record<string, RoomMeta>>({});
   const [search, setSearch] = useState("");
+  const [activeCategory, setActiveCategory] = useState<string | null>(null);
   const [selectionHistory, setSelectionHistory] = useState<
     Array<{ id: string; name: string; link?: string; description?: string }>
   >([]);
@@ -50,6 +53,7 @@ export default function UCCSvgMapPage() {
   const activePointers = useRef(
     new Map<number, { x: number; y: number }>()
   );
+  const applyHighlightsRef = useRef<() => void>(() => {});
   const panState = useRef<
     | {
         pointerId: number;
@@ -238,7 +242,10 @@ export default function UCCSvgMapPage() {
           svg.removeEventListener("mouseover", onOver);
           svg.removeEventListener("mouseout", onOut);
         });
+        // Re-apply any active highlights now that the SVG is ready
+        applyHighlightsRef.current();
       })
+      
       .catch((e) => console.error(`SVG load error (${url})`, e));
 
       return () => {
@@ -383,29 +390,60 @@ export default function UCCSvgMapPage() {
   };
 
 
-  // Apply search highlight by toggling a CSS class on matching ids
-  useEffect(() => {
+  // Apply search/category highlight by toggling a CSS class on matching ids
+  const applyHighlights = useCallback(() => {
     const host = svgHostRef.current;
     if (!host) return;
     const svg = host.querySelector("svg");
     if (!svg) return;
 
-    svg.querySelectorAll(".ucc-highlight").forEach((n) => n.classList.remove("ucc-highlight"));
-    if (!search) return;
+    svg
+      .querySelectorAll(".ucc-highlight")
+      .forEach((n) => n.classList.remove("ucc-highlight"));
 
-    const q = search.toLowerCase();
-        const matches = Object.keys(metaById).filter((id) => {
-      if (isInertId(id)) return false;
-      return (
-        id.toLowerCase().includes(q) ||
-        (metaById[id].name || "").toLowerCase().includes(q)
-      );
-    });
-    for (const id of matches) {
-      const el = svg.querySelector(`#${CSS.escape(id)}`);
-      if (el) el.classList.add("ucc-highlight");
+    const matches = new Set<string>();
+
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      Object.keys(metaById).forEach((id) => {
+        if (isInertId(id)) return;
+        if (
+          id.toLowerCase().includes(q) ||
+          (metaById[id].name || "").toLowerCase().includes(q)
+        ) {
+          matches.add(id);
+        }
+      });
     }
-  }, [search, metaById]);
+
+    if (activeCategory) {
+      Object.entries(metaById).forEach(([id, meta]) => {
+        if (isInertId(id)) return;
+        const value = meta.categories ?? meta.category;
+        const normalized = Array.isArray(value)
+          ? value
+          : typeof value === "string" && value
+          ? [value]
+          : [];
+        if (normalized.includes(activeCategory)) {
+          matches.add(id);
+        }
+      });
+    }
+
+    matches.forEach((id) => {
+      const el = svg.querySelector<SVGElement>(`#${CSS.escape(id)}`);
+      if (el) el.classList.add("ucc-highlight");
+    });
+  }, [activeCategory, metaById, search]);
+
+  useEffect(() => {
+    applyHighlightsRef.current = applyHighlights;
+  }, [applyHighlights]);
+
+  useEffect(() => {
+    applyHighlights();
+  }, [applyHighlights]);
 
   return (
     <div ref={containerRef} className="w-full h-[calc(100vh-80px)] flex">
@@ -436,7 +474,32 @@ export default function UCCSvgMapPage() {
               onChange={(e) => setSearch(e.target.value)}
               className="w-full rounded-xl border border-neutral-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500"
             />
-            <div className="mt-1 text-xs text-neutral-500">Matches get highlighted on the map.</div>
+            <div className="mt-1 text-xs text-neutral-500">
+              Matches get highlighted on the map. Use the shortcuts below for quick filters.
+            </div>
+            <div className="mt-3 flex items-center gap-2">
+              {CATEGORY_SHORTCUTS.map(({ id, label, Icon }) => {
+                const isActive = activeCategory === id;
+                return (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => setActiveCategory((prev) => (prev === id ? null : id))}
+                    aria-pressed={isActive}
+                    aria-label={label}
+                    title={label}
+                    className={`group relative flex aspect-square min-w-0 flex-1 max-w-[3.5rem] items-center justify-center rounded-full border-2 border-transparent p-1 transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 ${
+                      isActive
+                        ? "border-violet-500 bg-white shadow-[0_10px_24px_rgba(99,102,241,0.35)]"
+                        : "bg-transparent hover:border-neutral-200"
+                    }`}
+                  >
+                    <span className="sr-only">{label}</span>
+                    <Icon active={isActive} className="h-full w-full" />
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
           <div className="text-xs text-neutral-500">
@@ -520,25 +583,55 @@ export default function UCCSvgMapPage() {
           pointer-events: none !important;
         }
 
-        /* JS-driven hover: stroke only the hovered feature; if it's a <g>, style its child shapes */
-        #floor-svg .ucc-hover { /* no outline here to avoid SVG viewport boxes */ }
-        #floor-svg g.ucc-hover > *:not(.decorative):not(.bg),
-        #floor-svg path.ucc-hover,
-        #floor-svg rect.ucc-hover,
+        /* Search highlight: tint the room surface so overlapping walls stay crisp */
+        #floor-svg .ucc-highlight {
+          filter: drop-shadow(0 0 0.45rem rgba(124,58,237,0.55));
+        }
+        #floor-svg g.ucc-highlight > *:not(.decorative):not(.bg),
+        #floor-svg path.ucc-highlight,
+        #floor-svg rect.ucc-highlight,
+        #floor-svg polygon.ucc-highlight {
+          fill: rgba(196, 181, 253, 0.72) !important; /* lavender tint distinct from hover */
+          transition: fill 0.18s ease;
+        }
 
-        /* Selected (clicked): stronger stroke; same child-targeting logic */
-        #floor-svg .ucc-selected { /* no outline */ }
+        /* Clicked selection: render on top of shortcut/search tint */
+        #floor-svg .ucc-selected {
+          filter: drop-shadow(0 0 0.35rem rgba(99,102,241,0.55))
+                  drop-shadow(0 0 0.4rem rgba(67,56,202,0.4));
+        }
         #floor-svg g.ucc-selected > *:not(.decorative):not(.bg),
         #floor-svg path.ucc-selected,
         #floor-svg rect.ucc-selected,
+        #floor-svg polygon.ucc-selected {
+          fill: rgba(129, 140, 248, 0.95) !important; /* bolder indigo for clicked rooms */
+          transition: fill 0.18s ease;
+        }
+        
+        /* JS-driven hover: defined after highlight so it visually sits on top when both apply */
+        #floor-svg .ucc-hover {
+          filter: drop-shadow(0 0 0.35rem rgba(59,130,246,0.55));
+        }
+        #floor-svg g.ucc-hover > *:not(.decorative):not(.bg),
+        #floor-svg path.ucc-hover,
+        #floor-svg rect.ucc-hover,
+        #floor-svg polygon.ucc-hover {
+          fill: rgba(191, 219, 254, 0.92) !important; /* cool blue so hover stands out */
+          transition: fill 0.12s ease;
+        }
 
-        /* Search highlight: glow without touching strokes/fills */
-        #floor-svg .ucc-highlight {
-          filter: drop-shadow(0 0 0.35rem rgba(124,58,237,0.7));
+        /* When a shortcut/search highlight is hovered, layer the two glows for clarity */
+        #floor-svg .ucc-highlight.ucc-hover {
+          filter: drop-shadow(0 0 0.45rem rgba(124,58,237,0.55))
+                  drop-shadow(0 0 0.35rem rgba(59,130,246,0.55));
+        }
+
+        /* Combine selection with hover so hover still wins */
+        #floor-svg .ucc-selected.ucc-hover {
+          filter: drop-shadow(0 0 0.35rem rgba(99,102,241,0.55))
+                  drop-shadow(0 0 0.35rem rgba(59,130,246,0.55));
         }
       `}</style>
-
-
     </div>
   );
 }
