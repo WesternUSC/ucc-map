@@ -49,7 +49,7 @@ const createIcon = (
             <circle cx={32} cy={32} r={28} fill={`url(#${gradientId})`} />
           </svg>
           <div className="absolute inset-0 flex items-center justify-center">
-            <LucideIcon className="w-7 h-7 text-white" strokeWidth={2} />
+            <LucideIcon className="w-6 h-6 text-white" strokeWidth={2} />
           </div>
         </div>
       </div>

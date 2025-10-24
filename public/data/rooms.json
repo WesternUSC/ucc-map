@@ -116,10 +116,83 @@
     "category": "elevator"
   },
   {
-    "id": "Bathrooms",
-    "name": "Bathrooms",
+    "id": "Bathroom10",
+    "name": "Bathroom 10",
     "link": "",
     "floor": 1,
-    "description": "Public washrooms with accessible stalls and baby changing."
+    "description": "Public washroom with accessible stalls and baby changing.",
+    "category": "bathroom"
+  },
+  {
+    "id": "Bathroom9",
+    "name": "Bathroom 9",
+    "link": "",
+    "floor": 1,
+    "description": "Public washroom with accessible stalls and baby changing.",
+    "category": "bathroom"
+  },
+  {
+    "id": "Bathroom8",
+    "name": "Bathroom 8",
+    "link": "",
+    "floor": 1,
+    "description": "Public washroom with accessible stalls and baby changing.",
+    "category": "bathroom"
+  },
+  {
+    "id": "Bathroom7",
+    "name": "Bathroom 7",
+    "link": "",
+    "floor": 1,
+    "description": "Public washroom with accessible stalls and baby changing.",
+    "category": "bathroom"
+  },
+  {
+    "id": "Bathroom6",
+    "name": "Bathroom 6",
+    "link": "",
+    "floor": 1,
+    "description": "Public washroom with accessible stalls and baby changing.",
+    "category": "bathroom"
+  },
+  {
+    "id": "Bathroom5",
+    "name": "Bathroom 5",
+    "link": "",
+    "floor": 1,
+    "description": "Public washroom with accessible stalls and baby changing.",
+    "category": "bathroom"
+  },
+  {
+    "id": "Bathroom4",
+    "name": "Bathroom 4",
+    "link": "",
+    "floor": 1,
+    "description": "Public washroom with accessible stalls and baby changing.",
+    "category": "bathroom"
+  },
+  {
+    "id": "Bathroom3",
+    "name": "Bathroom 3",
+    "link": "",
+    "floor": 1,
+    "description": "Public washroom with accessible stalls and baby changing.",
+    "category": "bathroom"
+  },
+  {
+    "id": "Bathroom2",
+    "name": "Bathroom 2",
+    "link": "",
+    "floor": 1,
+    "description": "Public washroom with accessible stalls and baby changing.",
+    "category": "bathroom"
+  },
+  {
+    "id": "Bathroom1",
+    "name": "Bathroom 1",
+    "link": "",
+    "floor": 1,
+    "description": "Public washroom with accessible stalls and baby changing.",
+    "category": "bathroom"
   }
 ]
