@@ -32,6 +32,9 @@ const INERT_IDS = new Set([
 
 const isInertId = (id: string | null | undefined) => !!id && INERT_IDS.has(id);
 
+const DEFAULT_TRANSFORM: ViewTransform = { scale: 1, x: 0, y: 0 };
+const createDefaultTransform = (): ViewTransform => ({ ...DEFAULT_TRANSFORM });
+
 export default function UCCSvgMapPage() {
   const containerRef = useRef<HTMLDivElement>(null);
   const svgHostRef = useRef<HTMLDivElement>(null);
@@ -43,11 +46,9 @@ export default function UCCSvgMapPage() {
   const [selectionHistory, setSelectionHistory] = useState<
     Array<{ id: string; name: string; link?: string; description?: string }>
   >([]);
-  const [viewTransform, setViewTransform] = useState<ViewTransform>({
-    scale: 1,
-    x: 0,
-    y: 0,
-  });
+    const [viewTransform, setViewTransform] = useState<ViewTransform>(
+    createDefaultTransform()
+  );
 
   const transformRef = useRef<ViewTransform>(viewTransform);
   const activePointers = useRef(
@@ -71,7 +72,7 @@ export default function UCCSvgMapPage() {
     | null
   >(null);
 
-  const clampScale = (value: number) => Math.min(5, Math.max(0.5, value));
+  const clampScale = (value: number) => Math.min(3, Math.max(0.75, value));
 
   const applyTransform = (svg: SVGSVGElement | null, transform: ViewTransform) => {
     if (!svg) return;
@@ -141,7 +142,7 @@ export default function UCCSvgMapPage() {
         });
 
         svgElementRef.current = svg;
-        const initial = { scale: 1, x: 0, y: 0 };
+        const initial = createDefaultTransform();
         transformRef.current = initial;
         setViewTransform(initial);
         applyTransform(svg, initial);
@@ -389,6 +390,11 @@ export default function UCCSvgMapPage() {
     zoomAt(1 / 1.2);
   };
 
+  const handleResetZoom = () => {
+    const reset = createDefaultTransform();
+    transformRef.current = reset;
+    setViewTransform(reset);
+  };
 
   // Apply search/category highlight by toggling a CSS class on matching ids
   const applyHighlights = useCallback(() => {
@@ -542,27 +548,35 @@ export default function UCCSvgMapPage() {
       {/* SVG host */}
       <div className="relative flex-1 bg-white">
         <div className="absolute top-4 right-4 z-10 flex flex-col gap-2">
-        <button
-          type="button"
-          onClick={handleZoomIn}
-          className="h-10 w-10 rounded-full bg-white shadow border border-neutral-200 text-lg font-semibold hover:bg-neutral-100 focus:outline-none focus:ring-2 focus:ring-violet-500"
-          aria-label="Zoom in"
+          <button
+            type="button"
+            onClick={handleZoomIn}
+            className="h-10 w-10 rounded-full bg-violet-600 text-white shadow-lg border border-violet-500 text-lg font-semibold hover:bg-violet-500 focus:outline-none focus:ring-2 focus:ring-violet-300"
+            aria-label="Zoom in"
         >
           +
         </button>
         <button
           type="button"
           onClick={handleZoomOut}
-          className="h-10 w-10 rounded-full bg-white shadow border border-neutral-200 text-lg font-semibold hover:bg-neutral-100 focus:outline-none focus:ring-2 focus:ring-violet-500"
+          className="h-10 w-10 rounded-full bg-violet-600 text-white shadow-lg border border-violet-500 text-lg font-semibold hover:bg-violet-500 focus:outline-none focus:ring-2 focus:ring-violet-300"
           aria-label="Zoom out"
         >
           −
         </button>
-      </div>
-      <div
-        ref={svgHostRef}
-        className="relative w-full h-full overflow-hidden p-6"
-      />
+        <button
+          type="button"
+          onClick={handleResetZoom}
+          className="h-10 w-10 rounded-full bg-violet-100 text-violet-700 shadow border border-violet-300 text-base font-semibold hover:bg-violet-200 focus:outline-none focus:ring-2 focus:ring-violet-300"
+          aria-label="Reset zoom"
+        >
+            <span aria-hidden>⌂</span>
+          </button>
+        </div>
+        <div
+          ref={svgHostRef}
+          className="relative w-full h-full overflow-hidden p-6"
+        />
       </div>
 
       {/* Minimal styles for interactivity (scoped to #floor-svg) */}
