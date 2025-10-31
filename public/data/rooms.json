@@ -4,7 +4,8 @@
     "name": "Halls",
     "link": "",
     "floor": 1,
-    "description": "Main corridor linking the building's primary entrances."
+    "description": "Main corridor linking the building's primary entrances.",
+    "decorative": true
   },
   {
     "id": "TheSpoke",
@@ -73,7 +74,8 @@
     "name": "UCC 144",
     "link": "",
     "floor": 1,
-    "description": "Multi-purpose room used for meetings and study sessions."
+    "description": "Multi-purpose room used for meetings and study sessions.",
+    "decorative": true
   },
   {
     "id": "UCC146",

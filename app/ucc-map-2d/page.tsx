@@ -20,17 +20,10 @@ type RoomMeta = {
   description?: string;  // optional longer text
   category?: string | string[]; // e.g., "bathroom" or ["lab", "classroom"]
   categories?: string[]; 
+  decorative?: boolean;  // optional flag for non-interactive elements
 };
 
 type ViewTransform = {scale: number; x: number; y: number};
-
-// Keep this set updated for other non-interactive shapes
-const INERT_IDS = new Set([
-  "Atrium", // hallway outlines
-  "UCC144"  // Unused room?
-]);
-
-const isInertId = (id: string | null | undefined) => !!id && INERT_IDS.has(id);
 
 const DEFAULT_TRANSFORM: ViewTransform = { scale: 1, x: 0, y: 0 };
 const createDefaultTransform = (): ViewTransform => ({ ...DEFAULT_TRANSFORM });
@@ -48,6 +41,14 @@ export default function UCCSvgMapPage() {
   >([]);
     const [viewTransform, setViewTransform] = useState<ViewTransform>(
     createDefaultTransform()
+  );
+
+  const isDecorativeId = useCallback(
+    (id: string | null | undefined) => {
+      if (!id) return false;
+      return !!metaById[id]?.decorative;
+    },
+    [metaById]
   );
 
   const transformRef = useRef<ViewTransform>(viewTransform);
@@ -148,8 +149,12 @@ export default function UCCSvgMapPage() {
         applyTransform(svg, initial);
 
         // Helper: is this element inert?
-        const isDecorative = (el: Element | null) =>
-          !!el && (el.closest(".decorative") !== null);
+        const isDecorativeElement = (el: Element | null) => {
+          if (!el) return false;
+          if (el.closest(".decorative")) return true;
+          const id = (el as SVGElement).id;
+          return isDecorativeId(id);
+        };
 
         // Helper: avoid selecting the floor wrapper or svg root
         const isContainerId = (id: string) =>
@@ -160,10 +165,9 @@ export default function UCCSvgMapPage() {
         const clickHandlers = new Map<SVGElement, (ev: Event) => void>();
 
         clickable.forEach((el) => {
-          if (isDecorative(el)) return; // skip inert groups/shapes
-          if (isInertId(el.id)) {
+          if (isDecorativeElement(el)) {
             el.classList.add("ucc-inert");
-            return; // skip configured inert ids
+            return; // skip inert groups/shapes
           }
           el.classList.add("ucc-clickable");
 
@@ -172,8 +176,7 @@ export default function UCCSvgMapPage() {
             const target = ev.target as Element | null;
             const hit = target?.closest<SVGElement>("[id]") ?? el;
             if (!hit || hit.tagName.toLowerCase() === "svg") return;
-            if (isDecorative(hit)) return;
-            if (isInertId(hit.id)) return;
+            if (isDecorativeElement(hit)) return;
             if (isContainerId(hit.id)) return; // ignore wrapper like "floor1", "Layer_1"
 
             const id = hit.id;
@@ -222,7 +225,7 @@ export default function UCCSvgMapPage() {
         const onOver = (ev: MouseEvent) => {
           const hit = (ev.target as Element | null)?.closest<SVGElement>("[id]") ?? null;
           if (!hit || hit.tagName.toLowerCase() === "svg") return;
-          if (isDecorative(hit)) return;
+          if (isDecorativeElement(hit)) return;
           if (isContainerId(hit.id)) return; // don't hover whole floor wrapper
 
           if (hovered !== hit) {
@@ -254,7 +257,7 @@ export default function UCCSvgMapPage() {
         cleanupFns = [];
         svgElementRef.current = null;
       };
-  }, [floor, metaById]);
+  }, [floor, isDecorativeId]);
 
      
   useEffect(() => {
@@ -412,7 +415,7 @@ export default function UCCSvgMapPage() {
     if (search.trim()) {
       const q = search.toLowerCase();
       Object.keys(metaById).forEach((id) => {
-        if (isInertId(id)) return;
+        if (isDecorativeId(id)) return;
         if (
           id.toLowerCase().includes(q) ||
           (metaById[id].name || "").toLowerCase().includes(q)
@@ -424,7 +427,7 @@ export default function UCCSvgMapPage() {
 
     if (activeCategory) {
       Object.entries(metaById).forEach(([id, meta]) => {
-        if (isInertId(id)) return;
+        if (isDecorativeId(id)) return;
         const value = meta.categories ?? meta.category;
         const normalized = Array.isArray(value)
           ? value
@@ -441,7 +444,7 @@ export default function UCCSvgMapPage() {
       const el = svg.querySelector<SVGElement>(`#${CSS.escape(id)}`);
       if (el) el.classList.add("ucc-highlight");
     });
-  }, [activeCategory, metaById, search]);
+  }, [activeCategory, isDecorativeId, metaById, search]);
 
   useEffect(() => {
     applyHighlightsRef.current = applyHighlights;
