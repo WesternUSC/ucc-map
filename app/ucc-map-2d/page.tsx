@@ -32,6 +32,7 @@ export default function UCCSvgMapPage() {
   const containerRef = useRef<HTMLDivElement>(null);
   const svgHostRef = useRef<HTMLDivElement>(null);
   const svgElementRef = useRef<SVGSVGElement | null>(null);
+  const labelLayerRef = useRef<SVGGElement | null>(null);
   const pendingSelectionRef = useRef<string | null>(null);
   const [floor, setFloor] = useState(1); // active floor
   const [metaById, setMetaById] = useState<Record<string, RoomMeta>>({});
@@ -77,6 +78,118 @@ export default function UCCSvgMapPage() {
   >(null);
 
   const clampScale = (value: number) => Math.min(3, Math.max(0.75, value));
+
+    const collectCategories = (room: RoomMeta | undefined) => {
+    if (!room) return [] as string[];
+    const categories: string[] = [];
+    if (typeof room.category === "string") {
+      categories.push(room.category);
+    } else if (Array.isArray(room.category)) {
+      categories.push(...room.category);
+    }
+    if (Array.isArray(room.categories)) {
+      categories.push(...room.categories);
+    }
+    return categories.map((value) => value.toLowerCase());
+  };
+
+  const rebuildRoomLabels = useCallback(() => {
+    const svg = svgElementRef.current;
+    if (!svg) return;
+
+    if (labelLayerRef.current) {
+      labelLayerRef.current.remove();
+      labelLayerRef.current = null;
+    }
+
+    if (!Object.keys(metaById).length) return;
+
+    const labelLayer = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    labelLayer.setAttribute("class", "ucc-room-label-layer");
+    labelLayer.setAttribute("aria-hidden", "true");
+    labelLayer.style.pointerEvents = "none";
+    svg.appendChild(labelLayer);
+
+    const candidates = svg.querySelectorAll<SVGGraphicsElement>(
+      "g[id], path[id], rect[id], polygon[id], polyline[id]"
+    );
+
+    candidates.forEach((element) => {
+      const id = element.id;
+      if (!id) return;
+      if (/^floor\b/i.test(id) || /^layer\b/i.test(id) || id === "Layer_1") return;
+      if (isDecorativeId(id)) return;
+
+      const meta = metaById[id];
+      if (!meta || meta.decorative) return;
+
+      const categories = collectCategories(meta);
+      if (categories.includes("bathroom")) return;
+
+      let bbox: DOMRect;
+      try {
+        bbox = element.getBBox();
+      } catch (err) {
+        return;
+      }
+
+      if (!bbox || !Number.isFinite(bbox.width) || !Number.isFinite(bbox.height)) {
+        return;
+      }
+
+      if (bbox.width <= 0 || bbox.height <= 0) return;
+
+      const maxFontSize = Math.min(20, bbox.height * 0.6);
+      const minFontSize = 8;
+      if (maxFontSize < minFontSize) return;
+
+      const label = (meta.name || id).trim();
+      if (!label) return;
+
+      const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+      text.textContent = label;
+      text.setAttribute("class", "ucc-room-label");
+      text.setAttribute("data-room-id", id);
+      text.setAttribute("text-anchor", "middle");
+      text.setAttribute("dominant-baseline", "middle");
+
+      labelLayer.appendChild(text);
+
+      let fontSize = Math.min(18, maxFontSize);
+      let fits = false;
+      while (fontSize >= minFontSize) {
+        text.setAttribute("font-size", fontSize.toFixed(2));
+        const textLength = text.getComputedTextLength();
+        if (Number.isFinite(textLength) && textLength <= bbox.width * 0.9) {
+          fits = true;
+          break;
+        }
+        fontSize -= 1;
+      }
+
+      if (!fits) {
+        text.remove();
+        return;
+      }
+
+      if (bbox.height < fontSize * 1.1) {
+        text.remove();
+        return;
+      }
+
+      const centerX = bbox.x + bbox.width / 2;
+      const centerY = bbox.y + bbox.height / 2;
+      text.setAttribute("x", centerX.toFixed(2));
+      text.setAttribute("y", centerY.toFixed(2));
+    });
+
+    if (labelLayer.childElementCount === 0) {
+      labelLayer.remove();
+      return;
+    }
+
+    labelLayerRef.current = labelLayer;
+  }, [isDecorativeId, metaById]);
 
   const applyTransform = (svg: SVGSVGElement | null, transform: ViewTransform) => {
     if (!svg) return;
@@ -315,6 +428,8 @@ export default function UCCSvgMapPage() {
           svg.removeEventListener("mouseover", onOver);
           svg.removeEventListener("mouseout", onOut);
         });
+
+        rebuildRoomLabels();
         // Re-apply any active highlights now that the SVG is ready
         applyHighlightsRef.current();
 
@@ -331,11 +446,19 @@ export default function UCCSvgMapPage() {
       .catch((e) => console.error(`SVG load error (${url})`, e));
 
       return () => {
+        if (labelLayerRef.current) {
+          labelLayerRef.current.remove();
+          labelLayerRef.current = null;
+        }
         cleanupFns.forEach((fn) => fn());
         cleanupFns = [];
         svgElementRef.current = null;
       };
-  }, [floor, finalizeSelection, goToRoom, isDecorativeId]);
+  }, [floor, finalizeSelection, goToRoom, isDecorativeId, rebuildRoomLabels]);
+
+  useEffect(() => {
+    rebuildRoomLabels();
+  }, [rebuildRoomLabels]);
 
      
   useEffect(() => {
@@ -862,6 +985,22 @@ export default function UCCSvgMapPage() {
         #floor-svg .ucc-selected.ucc-hover {
           filter: drop-shadow(0 0 0.35rem rgba(99,102,241,0.55))
                   drop-shadow(0 0 0.35rem rgba(59,130,246,0.55));
+        }
+
+        /* Room label overlay */
+        #floor-svg .ucc-room-label-layer {
+          pointer-events: none;
+        }
+        #floor-svg .ucc-room-label {
+          font-family: "Inter", "system-ui", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+          font-weight: 600;
+          letter-spacing: 0.01em;
+          fill: #f9fafb;
+          stroke: rgba(17,24,39,0.75);
+          stroke-width: 2.5;
+          stroke-linejoin: round;
+          stroke-linecap: round;
+          paint-order: stroke fill;
         }
       `}</style>
     </div>
