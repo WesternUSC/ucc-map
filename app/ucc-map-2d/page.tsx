@@ -8,7 +8,7 @@
 
 "use client";
 
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CATEGORY_SHORTCUTS } from "./category-icons";
 
 // Types
@@ -32,9 +32,12 @@ export default function UCCSvgMapPage() {
   const containerRef = useRef<HTMLDivElement>(null);
   const svgHostRef = useRef<HTMLDivElement>(null);
   const svgElementRef = useRef<SVGSVGElement | null>(null);
+  const pendingSelectionRef = useRef<string | null>(null);
   const [floor, setFloor] = useState(1); // active floor
   const [metaById, setMetaById] = useState<Record<string, RoomMeta>>({});
   const [search, setSearch] = useState("");
+  const [searchHasFocus, setSearchHasFocus] = useState(false);
+  const [focusedSuggestionIndex, setFocusedSuggestionIndex] = useState(-1);
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
   const [selectionHistory, setSelectionHistory] = useState<
     Array<{ id: string; name: string; link?: string; description?: string }>
@@ -99,6 +102,91 @@ export default function UCCSvgMapPage() {
       };
     });
   };
+
+  const applySelectionStyling = useCallback((id: string) => {
+    const host = svgHostRef.current;
+    if (!host) return false;
+    const svg = host.querySelector("svg");
+    if (!svg) return false;
+    const target = svg.querySelector<SVGElement>(`#${CSS.escape(id)}`);
+    if (!target) return false;
+
+    svg
+      .querySelectorAll(".ucc-selected")
+      .forEach((node) => node.classList.remove("ucc-selected"));
+    target.classList.add("ucc-selected");
+    return true;
+  }, []);
+
+  const pushRoomToHistory = useCallback(
+    (id: string) => {
+      const info = metaById[id] || { id, name: id };
+      setSelectionHistory((prev) => {
+        const without = prev.filter((item) => item.id !== id);
+        return [
+          {
+            id,
+            name: info.name || id,
+            link: info.link,
+            description: info.description,
+          },
+          ...without,
+        ].slice(0, 5);
+      });
+    },
+    [metaById]
+  );
+
+  const finalizeSelection = useCallback(
+    (id: string) => {
+      const success = applySelectionStyling(id);
+      if (!success) return false;
+      pendingSelectionRef.current = null;
+      pushRoomToHistory(id);
+      return true;
+    },
+    [applySelectionStyling, pushRoomToHistory]
+  );
+
+  const goToRoom = useCallback(
+    (
+      id: string,
+      options?: { updateSearch?: boolean; clearCategory?: boolean; highlight?: boolean }
+    ) => {
+      const meta = metaById[id];
+      if (!meta || isDecorativeId(id)) return false;
+
+      if (options?.clearCategory) {
+        setActiveCategory(null);
+      }
+
+      if (options?.updateSearch) {
+        const value = meta.id || id;
+        setSearch(value);
+        setFocusedSuggestionIndex(-1);
+      }
+
+      const targetFloor = meta.floor ?? floor;
+      if (targetFloor !== floor) {
+        pendingSelectionRef.current = id;
+        setFloor(targetFloor);
+        if (options?.highlight) {
+          applyHighlightsRef.current();
+        }
+        return true;
+      }
+
+      const completed = finalizeSelection(id);
+      if (!completed) {
+        pendingSelectionRef.current = id;
+      } else if (options?.highlight) {
+        applyHighlightsRef.current();
+      }
+
+      return true;
+    },
+    [metaById, isDecorativeId, floor, finalizeSelection, setActiveCategory]
+  );
 
   // Load metadata once
   useEffect(() => {
@@ -180,26 +268,7 @@ export default function UCCSvgMapPage() {
             if (isContainerId(hit.id)) return; // ignore wrapper like "floor1", "Layer_1"
 
             const id = hit.id;
-            const info = metaById[id] || { id, name: id };
-
-            setSelectionHistory((prev) => {
-              const without = prev.filter((item) => item.id !== id);
-              return [
-                {
-                  id,
-                  name: info.name || id,
-                  link: info.link,
-                  description: info.description,
-                },
-                ...without,
-              ].slice(0, 5); // Stores up to 5 rooms in history
-            });
-
-            // selection styling
-            svg
-              .querySelectorAll(".ucc-selected")
-              .forEach((n) => n.classList.remove("ucc-selected"));
-            hit.classList.add("ucc-selected");
+            goToRoom(id, { updateSearch: false, clearCategory: false, highlight: false });
           };
 
           el.addEventListener("click", handler);
@@ -248,6 +317,15 @@ export default function UCCSvgMapPage() {
         });
         // Re-apply any active highlights now that the SVG is ready
         applyHighlightsRef.current();
+
+        const pending = pendingSelectionRef.current;
+        if (pending) {
+          requestAnimationFrame(() => {
+            if (finalizeSelection(pending)) {
+              applyHighlightsRef.current();
+            }
+          });
+        }
       })
       
       .catch((e) => console.error(`SVG load error (${url})`, e));
@@ -257,7 +335,7 @@ export default function UCCSvgMapPage() {
         cleanupFns = [];
         svgElementRef.current = null;
       };
-  }, [floor, isDecorativeId]);
+  }, [floor, finalizeSelection, goToRoom, isDecorativeId]);
 
      
   useEffect(() => {
@@ -399,6 +477,43 @@ export default function UCCSvgMapPage() {
     setViewTransform(reset);
   };
 
+  const suggestions = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return [] as RoomMeta[];
+    const scored: Array<{ room: RoomMeta; score: number }> = [];
+    Object.values(metaById).forEach((room) => {
+      if (!room.id || isDecorativeId(room.id)) return;
+      const idLower = room.id.toLowerCase();
+      const nameLower = (room.name || "").toLowerCase();
+      let score = 0;
+      if (idLower === q) score = 100;
+      else if (idLower.startsWith(q)) score = 90;
+      else if (nameLower.startsWith(q)) score = 80;
+      else if (idLower.includes(q)) score = 60;
+      else if (nameLower.includes(q)) score = 50;
+      if (score > 0) scored.push({ room, score });
+    });
+    scored.sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      return a.room.id.localeCompare(b.room.id);
+    });
+    return scored.slice(0, 8).map((entry) => entry.room);
+  }, [isDecorativeId, metaById, search]);
+
+  const getExactMatch = useCallback(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return null;
+    return (
+      Object.values(metaById).find(
+        (room) => room.id?.toLowerCase() === q && !isDecorativeId(room.id)
+      ) || null
+    );
+  }, [isDecorativeId, metaById, search]);
+
+  useEffect(() => {
+    setFocusedSuggestionIndex(-1);
+  }, [search]);
+
   // Apply search/category highlight by toggling a CSS class on matching ids
   const applyHighlights = useCallback(() => {
     const host = svgHostRef.current;
@@ -476,13 +591,113 @@ export default function UCCSvgMapPage() {
 
           <div>
             <div className="text-xs uppercase tracking-wide text-neutral-500 mb-1">Search</div>
-            <input
-              type="text"
-              placeholder="Room id or name…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="w-full rounded-xl border border-neutral-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500"
-            />
+            <div className="relative">
+              <input
+                type="text"
+                placeholder="Room id or name…"
+                value={search}
+                onFocus={() => setSearchHasFocus(true)}
+                onBlur={() => setTimeout(() => setSearchHasFocus(false), 120)}
+                onChange={(e) => {
+                  setSearch(e.target.value);
+                  setSearchHasFocus(true);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "ArrowDown") {
+                    event.preventDefault();
+                    if (suggestions.length === 0) return;
+                    setFocusedSuggestionIndex((prev) => {
+                      const next = prev + 1;
+                      return next >= suggestions.length ? 0 : next;
+                    });
+                  } else if (event.key === "ArrowUp") {
+                    event.preventDefault();
+                    if (suggestions.length === 0) return;
+                    setFocusedSuggestionIndex((prev) => {
+                      const next = prev - 1;
+                      return next < 0 ? suggestions.length - 1 : next;
+                    });
+                  } else if (event.key === "Enter") {
+                    const index =
+                      focusedSuggestionIndex >= 0
+                        ? focusedSuggestionIndex
+                        : suggestions.length > 0
+                        ? 0
+                        : -1;
+                    if (index >= 0) {
+                      event.preventDefault();
+                      const room = suggestions[index];
+                      goToRoom(room.id, {
+                        updateSearch: true,
+                        clearCategory: true,
+                        highlight: true,
+                      });
+                      setSearchHasFocus(false);
+                    } else {
+                      const exact = getExactMatch();
+                      if (exact) {
+                        event.preventDefault();
+                        goToRoom(exact.id, {
+                          updateSearch: true,
+                          clearCategory: true,
+                          highlight: true,
+                        });
+                        setSearchHasFocus(false);
+                      }
+                    }
+                  } else if (event.key === "Escape") {
+                    setFocusedSuggestionIndex(-1);
+                    setSearchHasFocus(false);
+                  }
+                }}
+                className="w-full rounded-xl border border-neutral-300 px-3 py-2 text-sm text-neutral-900 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-violet-500"
+              />
+              {search.trim() && (searchHasFocus || focusedSuggestionIndex >= 0) &&
+                suggestions.length > 0 && (
+                  <div
+                    className="absolute z-20 mt-1 w-full rounded-xl border border-neutral-200 bg-white shadow-lg overflow-hidden"
+                  >
+                    {suggestions.map((room, index) => {
+                      const isFocused = index === focusedSuggestionIndex;
+                      return (
+                        <button
+                          key={room.id}
+                          type="button"
+                          onMouseDown={(event) => event.preventDefault()}
+                          onClick={() => {
+                            goToRoom(room.id, {
+                              updateSearch: true,
+                              clearCategory: true,
+                              highlight: true,
+                            });
+                            setSearchHasFocus(false);
+                          }}
+                          className={`flex w-full items-center justify-between px-3 py-2 text-left text-sm transition-colors ${
+                            isFocused
+                              ? "bg-violet-600 text-white"
+                              : "hover:bg-violet-50 text-neutral-800"
+                          }`}
+                        >
+                          <span className="flex min-w-0 flex-col">
+                            <span className="truncate font-medium">
+                              {room.name?.trim() ? room.name : room.id}
+                            </span>
+                            {room.floor ? (
+                              <span
+                                className={`truncate text-xs ${
+                                  isFocused ? "text-violet-100" : "text-neutral-500"
+                                }`}
+                              >
+                                Floor {room.floor}
+                              </span>
+                            ) : null}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+            </div>
             <div className="mt-1 text-xs text-neutral-500">
               Matches get highlighted on the map. Use the shortcuts below for quick filters.
             </div>
