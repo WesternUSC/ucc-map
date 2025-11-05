@@ -8,7 +8,7 @@
 
 "use client";
 
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CATEGORY_SHORTCUTS } from "./category-icons";
 
 // Types
@@ -20,17 +20,10 @@ type RoomMeta = {
   description?: string;  // optional longer text
   category?: string | string[]; // e.g., "bathroom" or ["lab", "classroom"]
   categories?: string[]; 
+  decorative?: boolean;  // optional flag for non-interactive elements
 };
 
 type ViewTransform = {scale: number; x: number; y: number};
-
-// Keep this set updated for other non-interactive shapes
-const INERT_IDS = new Set([
-  "Atrium", // hallway outlines
-  "UCC144"  // Unused room?
-]);
-
-const isInertId = (id: string | null | undefined) => !!id && INERT_IDS.has(id);
 
 const DEFAULT_TRANSFORM: ViewTransform = { scale: 1, x: 0, y: 0 };
 const createDefaultTransform = (): ViewTransform => ({ ...DEFAULT_TRANSFORM });
@@ -39,15 +32,27 @@ export default function UCCSvgMapPage() {
   const containerRef = useRef<HTMLDivElement>(null);
   const svgHostRef = useRef<HTMLDivElement>(null);
   const svgElementRef = useRef<SVGSVGElement | null>(null);
+  const labelLayerRef = useRef<SVGGElement | null>(null);
+  const pendingSelectionRef = useRef<string | null>(null);
   const [floor, setFloor] = useState(1); // active floor
   const [metaById, setMetaById] = useState<Record<string, RoomMeta>>({});
   const [search, setSearch] = useState("");
+  const [searchHasFocus, setSearchHasFocus] = useState(false);
+  const [focusedSuggestionIndex, setFocusedSuggestionIndex] = useState(-1);
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
   const [selectionHistory, setSelectionHistory] = useState<
     Array<{ id: string; name: string; link?: string; description?: string }>
   >([]);
     const [viewTransform, setViewTransform] = useState<ViewTransform>(
     createDefaultTransform()
+  );
+
+  const isDecorativeId = useCallback(
+    (id: string | null | undefined) => {
+      if (!id) return false;
+      return !!metaById[id]?.decorative;
+    },
+    [metaById]
   );
 
   const transformRef = useRef<ViewTransform>(viewTransform);
@@ -74,6 +79,118 @@ export default function UCCSvgMapPage() {
 
   const clampScale = (value: number) => Math.min(3, Math.max(0.75, value));
 
+    const collectCategories = (room: RoomMeta | undefined) => {
+    if (!room) return [] as string[];
+    const categories: string[] = [];
+    if (typeof room.category === "string") {
+      categories.push(room.category);
+    } else if (Array.isArray(room.category)) {
+      categories.push(...room.category);
+    }
+    if (Array.isArray(room.categories)) {
+      categories.push(...room.categories);
+    }
+    return categories.map((value) => value.toLowerCase());
+  };
+
+  const rebuildRoomLabels = useCallback(() => {
+    const svg = svgElementRef.current;
+    if (!svg) return;
+
+    if (labelLayerRef.current) {
+      labelLayerRef.current.remove();
+      labelLayerRef.current = null;
+    }
+
+    if (!Object.keys(metaById).length) return;
+
+    const labelLayer = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    labelLayer.setAttribute("class", "ucc-room-label-layer");
+    labelLayer.setAttribute("aria-hidden", "true");
+    labelLayer.style.pointerEvents = "none";
+    svg.appendChild(labelLayer);
+
+    const candidates = svg.querySelectorAll<SVGGraphicsElement>(
+      "g[id], path[id], rect[id], polygon[id], polyline[id]"
+    );
+
+    candidates.forEach((element) => {
+      const id = element.id;
+      if (!id) return;
+      if (/^floor\b/i.test(id) || /^layer\b/i.test(id) || id === "Layer_1") return;
+      if (isDecorativeId(id)) return;
+
+      const meta = metaById[id];
+      if (!meta || meta.decorative) return;
+
+      const categories = collectCategories(meta);
+      if (categories.includes("bathroom")) return;
+
+      let bbox: DOMRect;
+      try {
+        bbox = element.getBBox();
+      } catch (err) {
+        return;
+      }
+
+      if (!bbox || !Number.isFinite(bbox.width) || !Number.isFinite(bbox.height)) {
+        return;
+      }
+
+      if (bbox.width <= 0 || bbox.height <= 0) return;
+
+      const maxFontSize = Math.min(20, bbox.height * 0.6);
+      const minFontSize = 8;
+      if (maxFontSize < minFontSize) return;
+
+      const label = (meta.name || id).trim();
+      if (!label) return;
+
+      const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+      text.textContent = label;
+      text.setAttribute("class", "ucc-room-label");
+      text.setAttribute("data-room-id", id);
+      text.setAttribute("text-anchor", "middle");
+      text.setAttribute("dominant-baseline", "middle");
+
+      labelLayer.appendChild(text);
+
+      let fontSize = Math.min(18, maxFontSize);
+      let fits = false;
+      while (fontSize >= minFontSize) {
+        text.setAttribute("font-size", fontSize.toFixed(2));
+        const textLength = text.getComputedTextLength();
+        if (Number.isFinite(textLength) && textLength <= bbox.width * 0.9) {
+          fits = true;
+          break;
+        }
+        fontSize -= 1;
+      }
+
+      if (!fits) {
+        text.remove();
+        return;
+      }
+
+      if (bbox.height < fontSize * 1.1) {
+        text.remove();
+        return;
+      }
+
+      const centerX = bbox.x + bbox.width / 2;
+      const centerY = bbox.y + bbox.height / 2;
+      text.setAttribute("x", centerX.toFixed(2));
+      text.setAttribute("y", centerY.toFixed(2));
+    });
+
+    if (labelLayer.childElementCount === 0) {
+      labelLayer.remove();
+      return;
+    }
+
+    labelLayerRef.current = labelLayer;
+  }, [isDecorativeId, metaById]);
+
   const applyTransform = (svg: SVGSVGElement | null, transform: ViewTransform) => {
     if (!svg) return;
     svg.style.transform = `translate(${transform.x}px, ${transform.y}px) scale(${transform.scale})`;
@@ -98,6 +215,91 @@ export default function UCCSvgMapPage() {
       };
     });
   };
+
+  const applySelectionStyling = useCallback((id: string) => {
+    const host = svgHostRef.current;
+    if (!host) return false;
+    const svg = host.querySelector("svg");
+    if (!svg) return false;
+    const target = svg.querySelector<SVGElement>(`#${CSS.escape(id)}`);
+    if (!target) return false;
+
+    svg
+      .querySelectorAll(".ucc-selected")
+      .forEach((node) => node.classList.remove("ucc-selected"));
+    target.classList.add("ucc-selected");
+    return true;
+  }, []);
+
+  const pushRoomToHistory = useCallback(
+    (id: string) => {
+      const info = metaById[id] || { id, name: id };
+      setSelectionHistory((prev) => {
+        const without = prev.filter((item) => item.id !== id);
+        return [
+          {
+            id,
+            name: info.name || id,
+            link: info.link,
+            description: info.description,
+          },
+          ...without,
+        ].slice(0, 5);
+      });
+    },
+    [metaById]
+  );
+
+  const finalizeSelection = useCallback(
+    (id: string) => {
+      const success = applySelectionStyling(id);
+      if (!success) return false;
+      pendingSelectionRef.current = null;
+      pushRoomToHistory(id);
+      return true;
+    },
+    [applySelectionStyling, pushRoomToHistory]
+  );
+
+  const goToRoom = useCallback(
+    (
+      id: string,
+      options?: { updateSearch?: boolean; clearCategory?: boolean; highlight?: boolean }
+    ) => {
+      const meta = metaById[id];
+      if (!meta || isDecorativeId(id)) return false;
+
+      if (options?.clearCategory) {
+        setActiveCategory(null);
+      }
+
+      if (options?.updateSearch) {
+        const value = meta.id || id;
+        setSearch(value);
+        setFocusedSuggestionIndex(-1);
+      }
+
+      const targetFloor = meta.floor ?? floor;
+      if (targetFloor !== floor) {
+        pendingSelectionRef.current = id;
+        setFloor(targetFloor);
+        if (options?.highlight) {
+          applyHighlightsRef.current();
+        }
+        return true;
+      }
+
+      const completed = finalizeSelection(id);
+      if (!completed) {
+        pendingSelectionRef.current = id;
+      } else if (options?.highlight) {
+        applyHighlightsRef.current();
+      }
+
+      return true;
+    },
+    [metaById, isDecorativeId, floor, finalizeSelection, setActiveCategory]
+  );
 
   // Load metadata once
   useEffect(() => {
@@ -148,8 +350,12 @@ export default function UCCSvgMapPage() {
         applyTransform(svg, initial);
 
         // Helper: is this element inert?
-        const isDecorative = (el: Element | null) =>
-          !!el && (el.closest(".decorative") !== null);
+        const isDecorativeElement = (el: Element | null) => {
+          if (!el) return false;
+          if (el.closest(".decorative")) return true;
+          const id = (el as SVGElement).id;
+          return isDecorativeId(id);
+        };
 
         // Helper: avoid selecting the floor wrapper or svg root
         const isContainerId = (id: string) =>
@@ -160,10 +366,9 @@ export default function UCCSvgMapPage() {
         const clickHandlers = new Map<SVGElement, (ev: Event) => void>();
 
         clickable.forEach((el) => {
-          if (isDecorative(el)) return; // skip inert groups/shapes
-          if (isInertId(el.id)) {
+          if (isDecorativeElement(el)) {
             el.classList.add("ucc-inert");
-            return; // skip configured inert ids
+            return; // skip inert groups/shapes
           }
           el.classList.add("ucc-clickable");
 
@@ -172,31 +377,11 @@ export default function UCCSvgMapPage() {
             const target = ev.target as Element | null;
             const hit = target?.closest<SVGElement>("[id]") ?? el;
             if (!hit || hit.tagName.toLowerCase() === "svg") return;
-            if (isDecorative(hit)) return;
-            if (isInertId(hit.id)) return;
+            if (isDecorativeElement(hit)) return;
             if (isContainerId(hit.id)) return; // ignore wrapper like "floor1", "Layer_1"
 
             const id = hit.id;
-            const info = metaById[id] || { id, name: id };
-
-            setSelectionHistory((prev) => {
-              const without = prev.filter((item) => item.id !== id);
-              return [
-                {
-                  id,
-                  name: info.name || id,
-                  link: info.link,
-                  description: info.description,
-                },
-                ...without,
-              ].slice(0, 5); // Stores up to 5 rooms in history
-            });
-
-            // selection styling
-            svg
-              .querySelectorAll(".ucc-selected")
-              .forEach((n) => n.classList.remove("ucc-selected"));
-            hit.classList.add("ucc-selected");
+            goToRoom(id, { updateSearch: false, clearCategory: false, highlight: false });
           };
 
           el.addEventListener("click", handler);
@@ -222,7 +407,7 @@ export default function UCCSvgMapPage() {
         const onOver = (ev: MouseEvent) => {
           const hit = (ev.target as Element | null)?.closest<SVGElement>("[id]") ?? null;
           if (!hit || hit.tagName.toLowerCase() === "svg") return;
-          if (isDecorative(hit)) return;
+          if (isDecorativeElement(hit)) return;
           if (isContainerId(hit.id)) return; // don't hover whole floor wrapper
 
           if (hovered !== hit) {
@@ -243,18 +428,37 @@ export default function UCCSvgMapPage() {
           svg.removeEventListener("mouseover", onOver);
           svg.removeEventListener("mouseout", onOut);
         });
+
+        rebuildRoomLabels();
         // Re-apply any active highlights now that the SVG is ready
         applyHighlightsRef.current();
+
+        const pending = pendingSelectionRef.current;
+        if (pending) {
+          requestAnimationFrame(() => {
+            if (finalizeSelection(pending)) {
+              applyHighlightsRef.current();
+            }
+          });
+        }
       })
       
       .catch((e) => console.error(`SVG load error (${url})`, e));
 
       return () => {
+        if (labelLayerRef.current) {
+          labelLayerRef.current.remove();
+          labelLayerRef.current = null;
+        }
         cleanupFns.forEach((fn) => fn());
         cleanupFns = [];
         svgElementRef.current = null;
       };
-  }, [floor, metaById]);
+  }, [floor, finalizeSelection, goToRoom, isDecorativeId, rebuildRoomLabels]);
+
+  useEffect(() => {
+    rebuildRoomLabels();
+  }, [rebuildRoomLabels]);
 
      
   useEffect(() => {
@@ -396,6 +600,43 @@ export default function UCCSvgMapPage() {
     setViewTransform(reset);
   };
 
+  const suggestions = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return [] as RoomMeta[];
+    const scored: Array<{ room: RoomMeta; score: number }> = [];
+    Object.values(metaById).forEach((room) => {
+      if (!room.id || isDecorativeId(room.id)) return;
+      const idLower = room.id.toLowerCase();
+      const nameLower = (room.name || "").toLowerCase();
+      let score = 0;
+      if (idLower === q) score = 100;
+      else if (idLower.startsWith(q)) score = 90;
+      else if (nameLower.startsWith(q)) score = 80;
+      else if (idLower.includes(q)) score = 60;
+      else if (nameLower.includes(q)) score = 50;
+      if (score > 0) scored.push({ room, score });
+    });
+    scored.sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      return a.room.id.localeCompare(b.room.id);
+    });
+    return scored.slice(0, 8).map((entry) => entry.room);
+  }, [isDecorativeId, metaById, search]);
+
+  const getExactMatch = useCallback(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return null;
+    return (
+      Object.values(metaById).find(
+        (room) => room.id?.toLowerCase() === q && !isDecorativeId(room.id)
+      ) || null
+    );
+  }, [isDecorativeId, metaById, search]);
+
+  useEffect(() => {
+    setFocusedSuggestionIndex(-1);
+  }, [search]);
+
   // Apply search/category highlight by toggling a CSS class on matching ids
   const applyHighlights = useCallback(() => {
     const host = svgHostRef.current;
@@ -412,7 +653,7 @@ export default function UCCSvgMapPage() {
     if (search.trim()) {
       const q = search.toLowerCase();
       Object.keys(metaById).forEach((id) => {
-        if (isInertId(id)) return;
+        if (isDecorativeId(id)) return;
         if (
           id.toLowerCase().includes(q) ||
           (metaById[id].name || "").toLowerCase().includes(q)
@@ -424,7 +665,7 @@ export default function UCCSvgMapPage() {
 
     if (activeCategory) {
       Object.entries(metaById).forEach(([id, meta]) => {
-        if (isInertId(id)) return;
+        if (isDecorativeId(id)) return;
         const value = meta.categories ?? meta.category;
         const normalized = Array.isArray(value)
           ? value
@@ -441,7 +682,7 @@ export default function UCCSvgMapPage() {
       const el = svg.querySelector<SVGElement>(`#${CSS.escape(id)}`);
       if (el) el.classList.add("ucc-highlight");
     });
-  }, [activeCategory, metaById, search]);
+  }, [activeCategory, isDecorativeId, metaById, search]);
 
   useEffect(() => {
     applyHighlightsRef.current = applyHighlights;
@@ -473,13 +714,113 @@ export default function UCCSvgMapPage() {
 
           <div>
             <div className="text-xs uppercase tracking-wide text-neutral-500 mb-1">Search</div>
-            <input
-              type="text"
-              placeholder="Room id or name…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="w-full rounded-xl border border-neutral-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500"
-            />
+            <div className="relative">
+              <input
+                type="text"
+                placeholder="Room id or name…"
+                value={search}
+                onFocus={() => setSearchHasFocus(true)}
+                onBlur={() => setTimeout(() => setSearchHasFocus(false), 120)}
+                onChange={(e) => {
+                  setSearch(e.target.value);
+                  setSearchHasFocus(true);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "ArrowDown") {
+                    event.preventDefault();
+                    if (suggestions.length === 0) return;
+                    setFocusedSuggestionIndex((prev) => {
+                      const next = prev + 1;
+                      return next >= suggestions.length ? 0 : next;
+                    });
+                  } else if (event.key === "ArrowUp") {
+                    event.preventDefault();
+                    if (suggestions.length === 0) return;
+                    setFocusedSuggestionIndex((prev) => {
+                      const next = prev - 1;
+                      return next < 0 ? suggestions.length - 1 : next;
+                    });
+                  } else if (event.key === "Enter") {
+                    const index =
+                      focusedSuggestionIndex >= 0
+                        ? focusedSuggestionIndex
+                        : suggestions.length > 0
+                        ? 0
+                        : -1;
+                    if (index >= 0) {
+                      event.preventDefault();
+                      const room = suggestions[index];
+                      goToRoom(room.id, {
+                        updateSearch: true,
+                        clearCategory: true,
+                        highlight: true,
+                      });
+                      setSearchHasFocus(false);
+                    } else {
+                      const exact = getExactMatch();
+                      if (exact) {
+                        event.preventDefault();
+                        goToRoom(exact.id, {
+                          updateSearch: true,
+                          clearCategory: true,
+                          highlight: true,
+                        });
+                        setSearchHasFocus(false);
+                      }
+                    }
+                  } else if (event.key === "Escape") {
+                    setFocusedSuggestionIndex(-1);
+                    setSearchHasFocus(false);
+                  }
+                }}
+                className="w-full rounded-xl border border-neutral-300 px-3 py-2 text-sm text-neutral-900 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-violet-500"
+              />
+              {search.trim() && (searchHasFocus || focusedSuggestionIndex >= 0) &&
+                suggestions.length > 0 && (
+                  <div
+                    className="absolute z-20 mt-1 w-full rounded-xl border border-neutral-200 bg-white shadow-lg overflow-hidden"
+                  >
+                    {suggestions.map((room, index) => {
+                      const isFocused = index === focusedSuggestionIndex;
+                      return (
+                        <button
+                          key={room.id}
+                          type="button"
+                          onMouseDown={(event) => event.preventDefault()}
+                          onClick={() => {
+                            goToRoom(room.id, {
+                              updateSearch: true,
+                              clearCategory: true,
+                              highlight: true,
+                            });
+                            setSearchHasFocus(false);
+                          }}
+                          className={`flex w-full items-center justify-between px-3 py-2 text-left text-sm transition-colors ${
+                            isFocused
+                              ? "bg-violet-600 text-white"
+                              : "hover:bg-violet-50 text-neutral-800"
+                          }`}
+                        >
+                          <span className="flex min-w-0 flex-col">
+                            <span className="truncate font-medium">
+                              {room.name?.trim() ? room.name : room.id}
+                            </span>
+                            {room.floor ? (
+                              <span
+                                className={`truncate text-xs ${
+                                  isFocused ? "text-violet-100" : "text-neutral-500"
+                                }`}
+                              >
+                                Floor {room.floor}
+                              </span>
+                            ) : null}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+            </div>
             <div className="mt-1 text-xs text-neutral-500">
               Matches get highlighted on the map. Use the shortcuts below for quick filters.
             </div>
@@ -644,6 +985,22 @@ export default function UCCSvgMapPage() {
         #floor-svg .ucc-selected.ucc-hover {
           filter: drop-shadow(0 0 0.35rem rgba(99,102,241,0.55))
                   drop-shadow(0 0 0.35rem rgba(59,130,246,0.55));
+        }
+
+        /* Room label overlay */
+        #floor-svg .ucc-room-label-layer {
+          pointer-events: none;
+        }
+        #floor-svg .ucc-room-label {
+          font-family: "Inter", "system-ui", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+          font-weight: 600;
+          letter-spacing: 0.01em;
+          fill: #f9fafb;
+          stroke: rgba(17,24,39,0.75);
+          stroke-width: 2.5;
+          stroke-linejoin: round;
+          stroke-linecap: round;
+          paint-order: stroke fill;
         }
       `}</style>
     </div>
