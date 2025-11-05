@@ -1,19 +1,7 @@
-import type { Metadata } from "next";
-import "./globals.css";
+// app/page.tsx
+import { redirect } from "next/navigation";
 
-export const metadata: Metadata = {
-  title: "UCC Map",
-  description: "Interactive campus map experience for the University College Cork.",
-};
-
-export default function RootLayout({
-  children,
-}: Readonly<{
-  children: React.ReactNode;
-}>) {
-  return (
-    <html lang="en">
-      <body className="antialiased">{children}</body>
-    </html>
-  );
+export default function Page() {
+  redirect("/ucc-map-2d");
+  return null;
 }
